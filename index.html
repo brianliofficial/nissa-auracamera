@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Emotion Mirror · 情緒鏡像</title>
+  </head>
+  <body>
+    <div class="app">
+      <section class="video-column" aria-label="Webcam with emotion overlay">
+        <div class="video-column-inner">
+          <div class="video-stage">
+            <video id="camera" playsinline muted autoplay class="camera"></video>
+            <div id="emotion-overlay" class="emotion-overlay" aria-hidden="true"></div>
+            <div id="capture-flash" class="capture-flash" aria-hidden="true"></div>
+            <canvas id="capture-freeze" class="capture-freeze" aria-hidden="true"></canvas>
+            <button
+              type="button"
+              id="btn-shutter"
+              class="btn-shutter"
+              disabled
+              aria-label="Capture photo / 拍照"
+            >
+              <svg
+                class="btn-shutter-icon btn-shutter-icon-camera"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                <circle cx="12" cy="13" r="4" />
+              </svg>
+              <svg
+                class="btn-shutter-icon btn-shutter-icon-download"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                hidden
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+            </button>
+            <div id="cam-placeholder" class="cam-placeholder">
+              Starting camera… / 正在開啟鏡頭…
+            </div>
+          </div>
+
+          <div class="gradient-picker" aria-label="UI Gradients picker">
+            <label class="gradient-picker-label" for="gradient-dropdown-trigger">
+              UI Gradients / 漸層選單
+            </label>
+            <div class="gradient-dropdown">
+              <button
+                type="button"
+                id="gradient-dropdown-trigger"
+                class="gradient-dropdown-trigger"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+              >
+                <span id="gradient-trigger-swatch" class="gradient-trigger-swatch"></span>
+                <span id="gradient-trigger-name" class="gradient-trigger-name">Auto / 自動</span>
+                <span class="gradient-trigger-chevron" aria-hidden="true">▾</span>
+              </button>
+              <ul
+                id="gradient-dropdown-menu"
+                class="gradient-dropdown-menu"
+                role="listbox"
+                hidden
+              ></ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="panel-column" aria-label="Emotion status panel">
+        <header class="panel-header">
+          <h1>Emotion Mirror</h1>
+          <p class="panel-subtitle">情緒鏡像 · Webcam + gradient overlay</p>
+        </header>
+
+        <div id="emotion-card" class="emotion-card emotion-neutral">
+          <p class="emotion-label-en" id="emotion-label-en">Neutral</p>
+          <p class="emotion-label-zh" id="emotion-label-zh">中性</p>
+          <div id="emotion-swatch" class="emotion-swatch"></div>
+        </div>
+
+        <p id="msg" class="msg" aria-live="polite"></p>
+
+        <details class="debug-scores">
+          <summary>Blendshape scores / 表情數值</summary>
+          <dl id="score-list" class="score-list"></dl>
+        </details>
+      </aside>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
