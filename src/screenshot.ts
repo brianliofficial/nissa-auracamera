@@ -151,7 +151,7 @@ function pad(n: number): string {
 
 function timestampFilename(): string {
   const d = new Date();
-  return `emotion-mirror-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.jpg`;
+  return `nissa-love-you-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.jpg`;
 }
 
 function parseRgba(color: string): [number, number, number, number] {
