@@ -1,32 +1,12 @@
-# Emotion Mirror · 情緒鏡像
+我的13歲快14歲的狗女兒nissa 8/4 因為疑似腦癌跟失智症狀況不得不在獸醫的建議下安樂走了
+我一直希望能夠以他的名義做點什麼
+所以我看到一個類似情緒光譜的照相收費蠻高的 所以我想到我可以做一個類似的相關功能
+希望大家可以 使用看看並且提供一點意見給我 
 
-Webcam app that overlays your video with emotion-driven gradients and lets you save a JPG snapshot.
+https://nissaauracamera.vercel.app/
 
-## Layout
+然後希望如果有看到這篇文章的人能夠也可以捐助一些錢給當初收容nissa的台中收容中心維持他們的營運
+https://www.animal.taichung.gov.tw/1521448/1521481/1521494
 
-- **Left 80%**: Live webcam + semi-transparent gradient overlay
-- **Right 20%**: Emotion status (English + 中文) + Save JPG button
 
-## Emotion overlays
-
-| Emotion | 情緒 | Gradient |
-|---------|------|----------|
-| Angry | 生氣 | Red → orange (45deg) |
-| Sad | 難過 | Blue → purple (45deg) |
-| Happy | 開心 | Yellow → green (45deg) |
-| Neutral | 中性 | Random colors at 45deg, cycling |
-
-Detection uses MediaPipe Face Landmarker blendshapes in the browser.
-
-## Run
-
-```bash
-npm install
-npm run dev
-```
-
-Use Chrome or Edge on localhost and allow camera access.
-
-## Save JPG
-
-Click **Save JPG / 儲存圖片** to download the current frame with the gradient overlay baked in (mirrored like the preview).
+謝謝你們
