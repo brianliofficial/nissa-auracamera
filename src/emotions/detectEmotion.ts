@@ -16,8 +16,11 @@ export interface EmotionState {
   };
   debug: {
     mouthDelta: number;
+    mouthFrown: number;
     browDown: number;
     browFurrow: number;
+    browInnerUp: number;
+    browTwitch: number;
     jawOpen: number;
     eyeWide: number;
   };
@@ -107,6 +110,74 @@ export function createMouthMotionTracker(): MouthMotionTracker {
   };
 }
 
+export interface BrowMotionTracker {
+  update(blendshapes: Classifications | undefined): number;
+  reset(): void;
+}
+
+/** Tracks rapid brow movement — eyebrow twitch / 眉毛抽動. */
+export function createBrowMotionTracker(): BrowMotionTracker {
+  let prevSignal = 0;
+  let smoothedTwitch = 0;
+
+  return {
+    update(blendshapes: Classifications | undefined): number {
+      const browInnerUp = blendScore(blendshapes, "browInnerUp");
+      const browOuterUp = avgScore(blendshapes, [
+        "browOuterUpLeft",
+        "browOuterUpRight",
+      ]);
+      const browDown = avgScore(blendshapes, [
+        "browDownLeft",
+        "browDownRight",
+      ]);
+      const signal = browInnerUp * 0.5 + browOuterUp * 0.3 + browDown * 0.2;
+      const delta = Math.abs(signal - prevSignal);
+      prevSignal += (signal - prevSignal) * 0.25;
+      smoothedTwitch += (delta - smoothedTwitch) * 0.4;
+      return smoothedTwitch;
+    },
+    reset() {
+      prevSignal = 0;
+      smoothedTwitch = 0;
+    },
+  };
+}
+
+function lipDownScore(
+  mouthDelta: number,
+  mouthFrown: number
+): number {
+  const deltaSignal = mouthDelta < 0 ? Math.min(1, -mouthDelta * 14) : 0;
+  return Math.min(1, Math.max(deltaSignal, mouthFrown));
+}
+
+function browSadSignal(
+  browInnerUp: number,
+  browTwitch: number,
+  browOuterUp: number
+): number {
+  return Math.min(
+    1,
+    browInnerUp * 0.55 + browTwitch * 2.4 + browOuterUp * 0.25
+  );
+}
+
+function isSadExpression(
+  lipDown: number,
+  browSad: number,
+  browTwitch: number,
+  browInnerUp: number,
+  angryScore: number,
+  browFurrow: number
+): boolean {
+  const hasLipDown = lipDown > 0.18;
+  const hasBrowSignal =
+    browTwitch > 0.032 || browInnerUp > 0.14 || browSad > 0.22;
+  const notAngry = angryScore < 0.42 || browFurrow < 0.38;
+  return hasLipDown && hasBrowSignal && notAngry;
+}
+
 function browFurrowScore(
   blendshapes: Classifications | undefined,
   landmarks: NormalizedLandmark[]
@@ -135,14 +206,21 @@ function browFurrowScore(
 export function classifyEmotion(
   blendshapes: Classifications | undefined,
   landmarks: NormalizedLandmark[] | undefined,
-  mouthTracker: MouthMotionTracker
+  mouthTracker: MouthMotionTracker,
+  browTracker: BrowMotionTracker
 ): EmotionState {
   const mouthDelta =
     landmarks?.length ? mouthTracker.update(landmarks) : 0;
+  const browTwitch = browTracker.update(blendshapes);
 
   const browDown = avgScore(blendshapes, [
     "browDownLeft",
     "browDownRight",
+  ]);
+  const browInnerUp = blendScore(blendshapes, "browInnerUp");
+  const browOuterUp = avgScore(blendshapes, [
+    "browOuterUpLeft",
+    "browOuterUpRight",
   ]);
   const browFurrow = landmarks?.length
     ? browFurrowScore(blendshapes, landmarks)
@@ -165,6 +243,8 @@ export function classifyEmotion(
 
   const mouthUpSignal = Math.max(0, mouthDelta * 12 + mouthSmile * 0.35);
   const mouthDownSignal = Math.max(0, -mouthDelta * 12 + mouthFrown * 0.35);
+  const lipDown = lipDownScore(mouthDelta, mouthFrown);
+  const browSad = browSadSignal(browInnerUp, browTwitch, browOuterUp);
 
   // Angry: furrowed brows + shouting (jaw open) + wide intense eyes, not smiling
   const shoutAngry = jawOpen > 0.32 && mouthSmile < 0.35;
@@ -177,10 +257,24 @@ export function classifyEmotion(
       noseSneer * 0.08 +
       (shoutAngry ? 0.15 : 0)
   );
-  const sadScore = Math.min(1, mouthDownSignal * 0.7 + mouthFrown * 0.3);
+  const sadScore = Math.min(
+    1,
+    lipDown * 0.35 +
+      mouthDownSignal * 0.25 +
+      mouthFrown * 0.15 +
+      browSad * 0.25
+  );
   const happyScore = Math.min(1, mouthUpSignal * 0.7 + mouthSmile * 0.3);
 
   const scores = { angry: angryScore, sad: sadScore, happy: happyScore };
+  const sadFace = isSadExpression(
+    lipDown,
+    browSad,
+    browTwitch,
+    browInnerUp,
+    angryScore,
+    browFurrow
+  );
 
   let kind: EmotionKind = "neutral";
   const isAngryFace =
@@ -191,13 +285,15 @@ export function classifyEmotion(
 
   if (isAngryFace && angryScore >= sadScore && angryScore >= happyScore) {
     kind = "angry";
+  } else if (sadFace && sadScore >= happyScore) {
+    kind = "sad";
   } else if (mouthDelta > 0.018 && happyScore >= sadScore && happyScore > 0.28) {
     kind = "happy";
   } else if (mouthDelta < -0.018 && sadScore >= happyScore && sadScore > 0.28) {
     kind = "sad";
   } else if (happyScore > 0.38 && happyScore >= sadScore) {
     kind = "happy";
-  } else if (sadScore > 0.35 && sadScore >= happyScore) {
+  } else if (sadScore > 0.32 && sadScore >= happyScore) {
     kind = "sad";
   }
 
@@ -207,7 +303,7 @@ export function classifyEmotion(
     labelEn: labels.labelEn,
     labelZh: labels.labelZh,
     scores,
-    debug: { mouthDelta, browDown, browFurrow, jawOpen, eyeWide },
+    debug: { mouthDelta, mouthFrown, browDown, browFurrow, browInnerUp, browTwitch, jawOpen, eyeWide },
   };
 }
 
@@ -217,8 +313,11 @@ export function createEmotionSmoother(alpha = 0.18) {
   let sad = 0;
   let happy = 0;
   let mouthDelta = 0;
+  let mouthFrown = 0;
   let browDown = 0;
   let browFurrow = 0;
+  let browInnerUp = 0;
+  let browTwitch = 0;
   let jawOpen = 0;
   let eyeWide = 0;
 
@@ -228,17 +327,32 @@ export function createEmotionSmoother(alpha = 0.18) {
       sad += (raw.scores.sad - sad) * alpha;
       happy += (raw.scores.happy - happy) * alpha;
       mouthDelta += (raw.debug.mouthDelta - mouthDelta) * alpha;
+      mouthFrown += (raw.debug.mouthFrown - mouthFrown) * alpha;
       browDown += (raw.debug.browDown - browDown) * alpha;
       browFurrow += (raw.debug.browFurrow - browFurrow) * alpha;
+      browInnerUp += (raw.debug.browInnerUp - browInnerUp) * alpha;
+      browTwitch += (raw.debug.browTwitch - browTwitch) * alpha;
       jawOpen += (raw.debug.jawOpen - jawOpen) * alpha;
       eyeWide += (raw.debug.eyeWide - eyeWide) * alpha;
+
+      const lipDown = lipDownScore(mouthDelta, mouthFrown);
+      const browSad = browSadSignal(browInnerUp, browTwitch, 0);
 
       const smoothed: EmotionState = {
         kind: "neutral",
         labelEn: LABELS.neutral.labelEn,
         labelZh: LABELS.neutral.labelZh,
         scores: { angry, sad, happy },
-        debug: { mouthDelta, browDown, browFurrow, jawOpen, eyeWide },
+        debug: {
+          mouthDelta,
+          mouthFrown,
+          browDown,
+          browFurrow,
+          browInnerUp,
+          browTwitch,
+          jawOpen,
+          eyeWide,
+        },
       };
 
       const isAngryFace =
@@ -246,15 +360,26 @@ export function createEmotionSmoother(alpha = 0.18) {
         browFurrow > 0.32 &&
         (jawOpen > 0.28 || browDown > 0.35);
 
+      const sadFace = isSadExpression(
+        lipDown,
+        browSad,
+        browTwitch,
+        browInnerUp,
+        angry,
+        browFurrow
+      );
+
       if (isAngryFace && angry >= sad && angry >= happy) {
         smoothed.kind = "angry";
+      } else if (sadFace && sad >= happy) {
+        smoothed.kind = "sad";
       } else if (mouthDelta > 0.018 && happy >= sad && happy > 0.28) {
         smoothed.kind = "happy";
       } else if (mouthDelta < -0.018 && sad >= happy && sad > 0.28) {
         smoothed.kind = "sad";
       } else if (happy > 0.38 && happy >= sad) {
         smoothed.kind = "happy";
-      } else if (sad > 0.35 && sad >= happy) {
+      } else if (sad > 0.32 && sad >= happy) {
         smoothed.kind = "sad";
       }
 
@@ -268,8 +393,11 @@ export function createEmotionSmoother(alpha = 0.18) {
       sad = 0;
       happy = 0;
       mouthDelta = 0;
+      mouthFrown = 0;
       browDown = 0;
       browFurrow = 0;
+      browInnerUp = 0;
+      browTwitch = 0;
       jawOpen = 0;
       eyeWide = 0;
     },

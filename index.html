@@ -8,57 +8,129 @@
   <body>
     <div class="app">
       <section class="video-column" aria-label="Webcam with emotion overlay">
-        <div class="video-column-inner">
-          <div class="video-stage">
-            <video id="camera" playsinline muted autoplay class="camera"></video>
-            <div id="emotion-overlay" class="emotion-overlay" aria-hidden="true"></div>
-            <div id="capture-flash" class="capture-flash" aria-hidden="true"></div>
+        <div class="video-stage">
+          <video id="camera" playsinline muted autoplay class="camera"></video>
+          <video id="recorded-playback" class="recorded-playback" playsinline loop muted hidden></video>
+          <img id="uploaded-photo" class="uploaded-photo" alt="" hidden />
+          <div id="emotion-overlay" class="emotion-overlay" aria-hidden="true"></div>
+          <div id="capture-flash" class="capture-flash" aria-hidden="true"></div>
             <canvas id="capture-freeze" class="capture-freeze" aria-hidden="true"></canvas>
-            <button
-              type="button"
-              id="btn-shutter"
-              class="btn-shutter"
-              disabled
-              aria-label="Capture photo / 拍照"
-            >
-              <svg
-                class="btn-shutter-icon btn-shutter-icon-camera"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.75"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                <circle cx="12" cy="13" r="4" />
-              </svg>
-              <svg
-                class="btn-shutter-icon btn-shutter-icon-download"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.75"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-                hidden
-              >
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-            </button>
-            <div id="cam-placeholder" class="cam-placeholder">
-              Starting camera… / 正在開啟鏡頭…
+            <div class="shutter-dock" id="shutter-dock">
+              <div class="live-shutter" id="live-shutter">
+                <div class="btn-shutter-wrap" id="btn-shutter-wrap">
+                  <svg
+                    class="shutter-countdown-ring"
+                    viewBox="0 0 52 52"
+                    aria-hidden="true"
+                  >
+                    <circle class="shutter-countdown-track" cx="26" cy="26" r="24" />
+                    <circle class="shutter-countdown-progress" cx="26" cy="26" r="24" />
+                  </svg>
+                  <button
+                    type="button"
+                    id="btn-shutter"
+                    class="btn-shutter"
+                    disabled
+                    aria-label="Tap to capture, hold to record / 點擊拍照，長按錄影"
+                  >
+                    <svg
+                      class="btn-shutter-icon shutter-icon-camera"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.75"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                      <circle cx="12" cy="13" r="4" />
+                    </svg>
+                    <svg
+                      class="btn-shutter-icon shutter-icon-record"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      stroke="none"
+                      aria-hidden="true"
+                      hidden
+                    >
+                      <circle cx="12" cy="12" r="6" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div class="review-shutter" id="review-shutter" hidden>
+                <button
+                  type="button"
+                  id="btn-review-download"
+                  class="btn-shutter is-download"
+                  aria-label="Save / 儲存"
+                >
+                  <svg
+                    class="btn-shutter-icon"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.75"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  id="btn-review-cancel"
+                  class="btn-shutter is-cancel"
+                  aria-label="Cancel / 取消"
+                >
+                  <svg
+                    class="btn-shutter-icon review-icon-cancel"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.75"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                  <svg
+                    class="btn-shutter-icon review-icon-delete"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.75"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    hidden
+                  >
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    <line x1="10" y1="11" x2="10" y2="17" />
+                    <line x1="14" y1="11" x2="14" y2="17" />
+                  </svg>
+                </button>
+              </div>
             </div>
+          <div id="cam-placeholder" class="cam-placeholder">
+            Starting camera… / 正在開啟鏡頭…
           </div>
+        </div>
+      </section>
 
-          <div class="gradient-picker" aria-label="UI Gradients picker">
-            <label class="gradient-picker-label" for="gradient-dropdown-trigger">
-              UI Gradients / 漸層選單
-            </label>
+      <footer class="controls-bar" aria-label="Controls">
+        <div class="gradient-picker" aria-label="UI Gradients picker">
+          <label class="gradient-picker-label" for="gradient-dropdown-trigger">
+            UI Gradients / 漸層選單
+          </label>
+          <div class="gradient-picker-row">
             <div class="gradient-dropdown">
               <button
                 type="button"
@@ -78,29 +150,30 @@
                 hidden
               ></ul>
             </div>
+
+            <div id="emotion-card" class="emotion-inline emotion-neutral" aria-live="polite">
+              <span class="emotion-label-en" id="emotion-label-en">Neutral</span>
+              <span class="emotion-label-sep" aria-hidden="true">·</span>
+              <span class="emotion-label-zh" id="emotion-label-zh">中性</span>
+            </div>
+
+            <div class="media-actions">
+              <input
+                type="file"
+                id="photo-upload-input"
+                class="visually-hidden"
+                accept="image/jpeg,image/png,image/webp,image/*"
+              />
+              <button type="button" id="btn-upload-photo" class="btn-media">
+                Upload / 上傳
+              </button>
+            </div>
           </div>
         </div>
-      </section>
 
-      <aside class="panel-column" aria-label="Emotion status panel">
-        <header class="panel-header">
-          <h1>Emotion Mirror</h1>
-          <p class="panel-subtitle">情緒鏡像 · Webcam + gradient overlay</p>
-        </header>
-
-        <div id="emotion-card" class="emotion-card emotion-neutral">
-          <p class="emotion-label-en" id="emotion-label-en">Neutral</p>
-          <p class="emotion-label-zh" id="emotion-label-zh">中性</p>
-          <div id="emotion-swatch" class="emotion-swatch"></div>
-        </div>
-
-        <p id="msg" class="msg" aria-live="polite"></p>
-
-        <details class="debug-scores">
-          <summary>Blendshape scores / 表情數值</summary>
-          <dl id="score-list" class="score-list"></dl>
-        </details>
-      </aside>
+        <p id="msg" class="msg visually-hidden" aria-live="polite"></p>
+        <div id="emotion-swatch" class="emotion-swatch visually-hidden" aria-hidden="true"></div>
+      </footer>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

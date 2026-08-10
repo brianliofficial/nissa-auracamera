@@ -4,6 +4,118 @@ import type { EmotionKind } from "./emotions/detectEmotion";
 import { AURA_PRESETS } from "./emotions/auraOverlay";
 import { readActiveUiGradient, uiGradientCss } from "./emotions/uiGradients";
 
+export interface FrameSource {
+  width: number;
+  height: number;
+  mirror: boolean;
+  drawCover(
+    ctx: CanvasRenderingContext2D,
+    cw: number,
+    ch: number,
+    rect: ReturnType<typeof coverVideoRect>
+  ): void;
+  drawSquare(
+    ctx: CanvasRenderingContext2D,
+    outSize: number,
+    crop: ReturnType<typeof squareCropRect>
+  ): void;
+}
+
+export function createVideoFrameSource(video: HTMLVideoElement): FrameSource {
+  return {
+    width: video.videoWidth,
+    height: video.videoHeight,
+    mirror: true,
+    drawCover(ctx, _cw, _ch, rect) {
+      ctx.save();
+      ctx.scale(-1, 1);
+      ctx.drawImage(
+        video,
+        rect.sx,
+        rect.sy,
+        rect.sw,
+        rect.sh,
+        -rect.dx - rect.dw,
+        rect.dy,
+        rect.dw,
+        rect.dh
+      );
+      ctx.restore();
+    },
+    drawSquare(ctx, outSize, crop) {
+      ctx.save();
+      ctx.scale(-1, 1);
+      ctx.drawImage(
+        video,
+        crop.sx,
+        crop.sy,
+        crop.size,
+        crop.size,
+        -outSize,
+        0,
+        outSize,
+        outSize
+      );
+      ctx.restore();
+    },
+  };
+}
+
+export function createImageFrameSource(img: HTMLImageElement): FrameSource {
+  return {
+    width: img.naturalWidth,
+    height: img.naturalHeight,
+    mirror: false,
+    drawCover(ctx, _cw, _ch, rect) {
+      ctx.drawImage(
+        img,
+        rect.sx,
+        rect.sy,
+        rect.sw,
+        rect.sh,
+        rect.dx,
+        rect.dy,
+        rect.dw,
+        rect.dh
+      );
+    },
+    drawSquare(ctx, outSize, crop) {
+      ctx.drawImage(
+        img,
+        crop.sx,
+        crop.sy,
+        crop.size,
+        crop.size,
+        0,
+        0,
+        outSize,
+        outSize
+      );
+    },
+  };
+}
+
+function drawOverlayOnCanvas(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  overlayEl: HTMLElement,
+  emotion: EmotionKind
+): void {
+  const uiGrad = readActiveUiGradient(overlayEl);
+  if (uiGrad) {
+    drawUiGradientOverlay(ctx, w, h, uiGradientCss(uiGrad));
+    return;
+  }
+  const auraLayer = overlayEl.querySelector(".aura-layer");
+  const blobs =
+    auraLayer instanceof HTMLElement &&
+    readAuraBlobColors(auraLayer).length > 0
+      ? readAuraBlobColors(auraLayer)
+      : AURA_PRESETS[emotion].blobs;
+  drawAuraOverlay(ctx, w, h, blobs);
+}
+
 function pad(n: number): string {
   return String(n).padStart(2, "0");
 }
@@ -137,17 +249,17 @@ function coverVideoRect(
 /** Paint the visible preview (cover fit) for on-screen freeze. */
 export function paintFreezeFrame(
   canvas: HTMLCanvasElement,
-  video: HTMLVideoElement,
+  source: FrameSource,
   overlayEl: HTMLElement,
   emotion: EmotionKind,
   stageEl?: HTMLElement
 ): boolean {
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
+  const vw = source.width;
+  const vh = source.height;
   if (vw <= 0 || vh <= 0) return false;
 
-  const cw = stageEl?.clientWidth || video.clientWidth;
-  const ch = stageEl?.clientHeight || video.clientHeight;
+  const cw = stageEl?.clientWidth ?? 0;
+  const ch = stageEl?.clientHeight ?? 0;
   if (cw <= 0 || ch <= 0) return false;
 
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -161,55 +273,30 @@ export function paintFreezeFrame(
   ctx.clearRect(0, 0, cw, ch);
 
   const rect = coverVideoRect(vw, vh, cw, ch);
-  ctx.save();
-  ctx.scale(-1, 1);
-  ctx.drawImage(
-    video,
-    rect.sx,
-    rect.sy,
-    rect.sw,
-    rect.sh,
-    -rect.dx - rect.dw,
-    rect.dy,
-    rect.dw,
-    rect.dh
-  );
-  ctx.restore();
-
-  const uiGrad = readActiveUiGradient(overlayEl);
-  if (uiGrad) {
-    drawUiGradientOverlay(ctx, cw, ch, uiGradientCss(uiGrad));
-  } else {
-    const auraLayer = overlayEl.querySelector(".aura-layer");
-    const blobs =
-      auraLayer instanceof HTMLElement &&
-      readAuraBlobColors(auraLayer).length > 0
-        ? readAuraBlobColors(auraLayer)
-        : AURA_PRESETS[emotion].blobs;
-    drawAuraOverlay(ctx, cw, ch, blobs);
-  }
+  source.drawCover(ctx, cw, ch, rect);
+  drawOverlayOnCanvas(ctx, cw, ch, overlayEl, emotion);
 
   // #region agent log
-  fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'screenshot.ts:paintFreezeFrame',message:'freeze painted',data:{vw,vh,cw,ch,canvasW:canvas.width,canvasH:canvas.height},timestamp:Date.now(),hypothesisId:'H-freeze',runId:'post-fix'})}).catch(()=>{});
+  fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'screenshot.ts:paintFreezeFrame',message:'freeze painted',data:{vw,vh,cw,ch,canvasW:canvas.width,canvasH:canvas.height,mirror:source.mirror},timestamp:Date.now(),hypothesisId:'H-upload',runId:'post-fix'})}).catch(()=>{});
   // #endregion
 
   return canvas.width > 0 && canvas.height > 0;
 }
 
 export async function captureEmotionJpeg(
-  video: HTMLVideoElement,
+  source: FrameSource,
   overlayEl: HTMLElement,
   emotion: EmotionKind
 ): Promise<void> {
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
+  const vw = source.width;
+  const vh = source.height;
   if (vw <= 0 || vh <= 0) {
-    throw new Error("Video is not ready yet.");
+    throw new Error("Image is not ready yet.");
   }
 
-  const { sx, sy, size } = squareCropRect(vw, vh);
+  const crop = squareCropRect(vw, vh);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const outSize = Math.round(size * dpr);
+  const outSize = Math.round(crop.size * dpr);
 
   const canvas = document.createElement("canvas");
   canvas.width = outSize;
@@ -217,26 +304,11 @@ export async function captureEmotionJpeg(
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Could not create canvas context.");
 
-  ctx.save();
-  ctx.scale(-1, 1);
-  ctx.drawImage(video, sx, sy, size, size, -outSize, 0, outSize, outSize);
-  ctx.restore();
-
-  const uiGrad = readActiveUiGradient(overlayEl);
-  if (uiGrad) {
-    drawUiGradientOverlay(ctx, outSize, outSize, uiGradientCss(uiGrad));
-  } else {
-    const auraLayer = overlayEl.querySelector(".aura-layer");
-    const blobs =
-      auraLayer instanceof HTMLElement &&
-      readAuraBlobColors(auraLayer).length > 0
-        ? readAuraBlobColors(auraLayer)
-        : AURA_PRESETS[emotion].blobs;
-    drawAuraOverlay(ctx, outSize, outSize, blobs);
-  }
+  source.drawSquare(ctx, outSize, crop);
+  drawOverlayOnCanvas(ctx, outSize, outSize, overlayEl, emotion);
 
   // #region agent log
-  fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'screenshot.ts:capture',message:'square jpg captured',data:{vw,vh,sx,sy,size,outSize},timestamp:Date.now(),hypothesisId:'H-crop'})}).catch(()=>{});
+  fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'screenshot.ts:capture',message:'square jpg captured',data:{vw,vh,sx:crop.sx,sy:crop.sy,size:crop.size,outSize},timestamp:Date.now(),hypothesisId:'H-crop'})}).catch(()=>{});
   // #endregion
 
   const blob = await new Promise<Blob>((resolve, reject) => {
