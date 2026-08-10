@@ -37,6 +37,11 @@ import {
   paintFreezeFrame,
   type FrameSource,
 } from "./screenshot";
+import {
+  blobFromReviewCanvas,
+  SHARE_PLATFORMS,
+  shareReviewPhoto,
+} from "./sharePhoto";
 import { playShutterSound } from "./shutterSound";
 import {
   createEmotionVideoRecorder,
@@ -184,7 +189,10 @@ async function bootstrap(): Promise<void> {
   const liveShutter = document.getElementById("live-shutter");
   const reviewShutter = document.getElementById("review-shutter");
   const btnReviewDownload = document.getElementById("btn-review-download");
+  const btnReviewShare = document.getElementById("btn-review-share");
   const btnReviewCancel = document.getElementById("btn-review-cancel");
+  const shareSheet = document.getElementById("share-sheet");
+  const shareSheetGrid = document.getElementById("share-sheet-grid");
   const reviewIconCancel = document.querySelector(".review-icon-cancel");
   const reviewIconDelete = document.querySelector(".review-icon-delete");
   const captureFlash = document.getElementById("capture-flash");
@@ -221,7 +229,10 @@ async function bootstrap(): Promise<void> {
     !(liveShutter instanceof HTMLElement) ||
     !(reviewShutter instanceof HTMLElement) ||
     !(btnReviewDownload instanceof HTMLButtonElement) ||
+    !(btnReviewShare instanceof HTMLButtonElement) ||
     !(btnReviewCancel instanceof HTMLButtonElement) ||
+    !(shareSheet instanceof HTMLElement) ||
+    !(shareSheetGrid instanceof HTMLElement) ||
     !(reviewIconCancel instanceof SVGElement) ||
     !(reviewIconDelete instanceof SVGElement) ||
     !(captureFlash instanceof HTMLElement) ||
@@ -263,7 +274,10 @@ async function bootstrap(): Promise<void> {
   const liveShutterEl = liveShutter;
   const reviewShutterEl = reviewShutter;
   const btnReviewDownloadEl = btnReviewDownload;
+  const btnReviewShareEl = btnReviewShare;
   const btnReviewCancelEl = btnReviewCancel;
+  const shareSheetEl = shareSheet;
+  const shareSheetGridEl = shareSheetGrid;
   const reviewIconCancelEl = reviewIconCancel;
   const reviewIconDeleteEl = reviewIconDelete;
   const captureFlashEl = captureFlash;
@@ -351,6 +365,10 @@ async function bootstrap(): Promise<void> {
 
   const setReviewButtons = (kind: ReviewKind): void => {
     const isVideo = kind === "video";
+    const isPhoto = kind === "photo";
+    btnReviewShareEl.hidden = !isPhoto;
+    shareSheetEl.hidden = true;
+    btnReviewShareEl.setAttribute("aria-expanded", "false");
     btnReviewCancelEl.classList.toggle("is-delete", isVideo);
     btnReviewCancelEl.classList.toggle("is-cancel", !isVideo);
     btnReviewCancelEl.setAttribute(
@@ -836,6 +854,58 @@ async function bootstrap(): Promise<void> {
     photoUploadInputEl.click();
   });
 
+  const closeShareSheet = (): void => {
+    shareSheetEl.hidden = true;
+    btnReviewShareEl.setAttribute("aria-expanded", "false");
+  };
+
+  const openShareSheet = (): void => {
+    shareSheetEl.hidden = false;
+    btnReviewShareEl.setAttribute("aria-expanded", "true");
+  };
+
+  for (const platform of SHARE_PLATFORMS) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "share-platform-btn";
+    btn.dataset.platform = platform.id;
+    btn.innerHTML = `<span class="share-platform-mark" style="background:${platform.accent}">${platform.shortLabel}</span><span class="share-platform-label">${platform.label}</span>`;
+    btn.addEventListener("click", async () => {
+      if (reviewKind !== "photo" || !captureFreezeEl.classList.contains("is-visible")) {
+        return;
+      }
+      msgEl.textContent = "Preparing share… / 準備分享中…";
+      try {
+        const blob = await blobFromReviewCanvas(captureFreezeEl);
+        const result = await shareReviewPhoto(blob, platform.id);
+        if (result === "shared") {
+          msgEl.textContent = "Shared! / 已分享";
+        } else if (result === "opened") {
+          msgEl.textContent = "Opened share page / 已開啟分享頁面";
+        } else {
+          msgEl.textContent = "Photo saved — share from gallery / 照片已儲存，請從相簿分享";
+        }
+        closeShareSheet();
+        // #region agent log
+        fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:share',message:'photo shared',data:{platform:platform.id,result},timestamp:Date.now(),hypothesisId:'H-share',runId:'share-photo'})}).catch(()=>{});
+        // #endregion
+      } catch (e) {
+        msgEl.textContent =
+          e instanceof Error ? e.message : "Share failed / 分享失敗";
+      }
+    });
+    shareSheetGridEl.appendChild(btn);
+  }
+
+  btnReviewShareEl.addEventListener("click", () => {
+    if (reviewKind !== "photo") return;
+    if (shareSheetEl.hidden) {
+      openShareSheet();
+    } else {
+      closeShareSheet();
+    }
+  });
+
   btnReviewDownloadEl.addEventListener("click", async () => {
     if (sourceMode === "upload" && !uploadActive) return;
     if (reviewKind === "video" && recordedVideoBlob) {
@@ -877,6 +947,7 @@ async function bootstrap(): Promise<void> {
   });
 
   btnReviewCancelEl.addEventListener("click", async () => {
+    closeShareSheet();
     // #region agent log
     fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:review',message:'review cancelled',data:{sourceMode,frameFrozen,reviewKind},timestamp:Date.now(),hypothesisId:'H-shutter',runId:'post-fix'})}).catch(()=>{});
     // #endregion

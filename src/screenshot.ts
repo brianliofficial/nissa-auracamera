@@ -10,6 +10,7 @@ import {
   scaledUiGradientOpacity,
 } from "./overlayOpacity";
 import { getUiGradient, readActiveUiGradient, type UiGradient } from "./emotions/uiGradients";
+import { reviewPhotoFilename } from "./sharePhoto";
 import { shouldMirrorCamera } from "./camera";
 
 export type CaptureOverlayMode = "auto" | string;
@@ -145,15 +146,6 @@ function auraBlurPx(emotion: EmotionKind, h: number): number {
   const base = emotion === "neutral" ? 38 : 48;
   const refH = Math.max(window.innerHeight, 1);
   return base * (h / refH);
-}
-
-function pad(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
-function timestampFilename(): string {
-  const d = new Date();
-  return `nissa-love-you-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.jpg`;
 }
 
 function parseRgba(color: string): [number, number, number, number] {
@@ -391,7 +383,7 @@ export async function captureEmotionJpeg(
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = timestampFilename();
+  a.download = reviewPhotoFilename();
   a.click();
   URL.revokeObjectURL(url);
 }
