@@ -2,7 +2,9 @@ import type { AuraBlobConfig } from "./emotions/auraOverlay";
 import { readAuraBlobColors } from "./emotions/auraOverlay";
 import type { EmotionKind } from "./emotions/detectEmotion";
 import { AURA_PRESETS } from "./emotions/auraOverlay";
-import { readActiveUiGradient, uiGradientCss } from "./emotions/uiGradients";
+import { getUiGradient, readActiveUiGradient, type UiGradient } from "./emotions/uiGradients";
+
+export type CaptureOverlayMode = "auto" | string;
 
 export interface FrameSource {
   width: number;
@@ -95,17 +97,28 @@ export function createImageFrameSource(img: HTMLImageElement): FrameSource {
   };
 }
 
+function resolveUiGradient(
+  overlayEl: HTMLElement,
+  overlayMode: CaptureOverlayMode
+): UiGradient | null {
+  if (overlayMode !== "auto") {
+    return getUiGradient(overlayMode) ?? null;
+  }
+  return readActiveUiGradient(overlayEl);
+}
+
 function drawOverlayOnCanvas(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
   overlayEl: HTMLElement,
-  emotion: EmotionKind
-): void {
-  const uiGrad = readActiveUiGradient(overlayEl);
+  emotion: EmotionKind,
+  overlayMode: CaptureOverlayMode
+): "ui-gradient" | "aura" {
+  const uiGrad = resolveUiGradient(overlayEl, overlayMode);
   if (uiGrad) {
-    drawUiGradientOverlay(ctx, w, h, uiGradientCss(uiGrad));
-    return;
+    drawUiGradientOverlay(ctx, w, h, uiGrad);
+    return "ui-gradient";
   }
   const auraLayer = overlayEl.querySelector(".aura-layer");
   const blobs =
@@ -114,6 +127,7 @@ function drawOverlayOnCanvas(
       ? readAuraBlobColors(auraLayer)
       : AURA_PRESETS[emotion].blobs;
   drawAuraOverlay(ctx, w, h, blobs, emotion);
+  return "aura";
 }
 
 const AURA_LAYER_INSET = 0.12;
@@ -251,14 +265,27 @@ function drawUiGradientOverlay(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
-  cssGradient: string
+  gradient: UiGradient
 ): void {
+  const angleRad = ((gradient.angle - 90) * Math.PI) / 180;
+  const cx = w / 2;
+  const cy = h / 2;
+  const length = Math.hypot(w, h);
+  const x0 = cx - (Math.cos(angleRad) * length) / 2;
+  const y0 = cy - (Math.sin(angleRad) * length) / 2;
+  const x1 = cx + (Math.cos(angleRad) * length) / 2;
+  const y1 = cy + (Math.sin(angleRad) * length) / 2;
+
+  const grad = ctx.createLinearGradient(x0, y0, x1, y1);
+  grad.addColorStop(0, gradient.from);
+  grad.addColorStop(1, gradient.to);
+
   ctx.save();
   ctx.globalCompositeOperation = "screen";
   ctx.globalAlpha = 0.72;
-  ctx.fillStyle = cssGradient;
+  ctx.fillStyle = grad;
   ctx.fillRect(0, 0, w, h);
-  ctx.globalAlpha = 0.28;
+  ctx.globalAlpha = 0.55;
   ctx.fillRect(0, 0, w, h);
   ctx.restore();
 }
@@ -283,6 +310,7 @@ export function paintFreezeFrame(
   source: FrameSource,
   overlayEl: HTMLElement,
   emotion: EmotionKind,
+  overlayMode: CaptureOverlayMode,
   stageEl?: HTMLElement
 ): boolean {
   const vw = source.width;
@@ -305,13 +333,10 @@ export function paintFreezeFrame(
 
   const rect = coverVideoRect(vw, vh, cw, ch);
   source.drawCover(ctx, cw, ch, rect);
-  drawOverlayOnCanvas(ctx, cw, ch, overlayEl, emotion);
+  const overlayType = drawOverlayOnCanvas(ctx, cw, ch, overlayEl, emotion, overlayMode);
 
-  const auraLayer = overlayEl.querySelector(".aura-layer");
-  const blobCount =
-    auraLayer instanceof HTMLElement ? readAuraBlobColors(auraLayer).length : 0;
   // #region agent log
-  fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'screenshot.ts:paintFreezeFrame',message:'freeze painted',data:{vw,vh,cw,ch,emotion,blobCount,blurPx:auraBlurPx(emotion,ch),canvasW:canvas.width,canvasH:canvas.height,mirror:source.mirror},timestamp:Date.now(),hypothesisId:'H-capture-intensity',runId:'post-fix'})}).catch(()=>{});
+  fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'screenshot.ts:paintFreezeFrame',message:'freeze painted',data:{vw,vh,cw,ch,emotion,overlayMode,overlayType,uiGradientId:overlayMode,datasetUiGradient:overlayEl.dataset.uiGradient,blurPx:overlayType==='aura'?auraBlurPx(emotion,ch):0,canvasW:canvas.width,canvasH:canvas.height,mirror:source.mirror},timestamp:Date.now(),hypothesisId:'H-capture-intensity',runId:'post-fix'})}).catch(()=>{});
   // #endregion
 
   return canvas.width > 0 && canvas.height > 0;
@@ -320,7 +345,9 @@ export function paintFreezeFrame(
 export async function captureEmotionJpeg(
   source: FrameSource,
   overlayEl: HTMLElement,
-  emotion: EmotionKind
+  emotion: EmotionKind,
+  overlayMode: CaptureOverlayMode,
+  stageEl?: HTMLElement
 ): Promise<void> {
   const vw = source.width;
   const vh = source.height;
@@ -328,21 +355,24 @@ export async function captureEmotionJpeg(
     throw new Error("Image is not ready yet.");
   }
 
-  const crop = squareCropRect(vw, vh);
+  const cw = stageEl?.clientWidth ?? vw;
+  const ch = stageEl?.clientHeight ?? vh;
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const outSize = Math.round(crop.size * dpr);
 
   const canvas = document.createElement("canvas");
-  canvas.width = outSize;
-  canvas.height = outSize;
+  canvas.width = Math.round(cw * dpr);
+  canvas.height = Math.round(ch * dpr);
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Could not create canvas context.");
 
-  source.drawSquare(ctx, outSize, crop);
-  drawOverlayOnCanvas(ctx, outSize, outSize, overlayEl, emotion);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cw, ch);
+  const rect = coverVideoRect(vw, vh, cw, ch);
+  source.drawCover(ctx, cw, ch, rect);
+  const overlayType = drawOverlayOnCanvas(ctx, cw, ch, overlayEl, emotion, overlayMode);
 
   // #region agent log
-  fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'screenshot.ts:capture',message:'square jpg captured',data:{vw,vh,sx:crop.sx,sy:crop.sy,size:crop.size,outSize},timestamp:Date.now(),hypothesisId:'H-crop'})}).catch(()=>{});
+  fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'screenshot.ts:capture',message:'jpg captured',data:{vw,vh,cw,ch,overlayMode,overlayType,canvasW:canvas.width,canvasH:canvas.height},timestamp:Date.now(),hypothesisId:'H-capture-intensity',runId:'post-fix'})}).catch(()=>{});
   // #endregion
 
   const blob = await new Promise<Blob>((resolve, reject) => {

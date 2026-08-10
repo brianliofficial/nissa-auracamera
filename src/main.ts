@@ -542,6 +542,7 @@ async function bootstrap(): Promise<void> {
       getFrameSource(),
       overlayEl,
       currentEmotion,
+      overlayMode,
       videoStageEl
     );
     if (!painted) {
@@ -576,6 +577,7 @@ async function bootstrap(): Promise<void> {
       overlayEl,
       stageEl: videoStageEl,
       getEmotion: () => currentEmotion,
+      getOverlayMode: () => overlayMode,
       onProgress: (remainingSec, progress) => {
         setRecordingUi(true, progress);
         msgEl.textContent = `Recording ${remainingSec}s / 錄影中 ${remainingSec} 秒`;
@@ -729,7 +731,13 @@ async function bootstrap(): Promise<void> {
     if (sourceMode === "camera" && !frameFrozen) return;
     msgEl.textContent = "Saving JPG… / 儲存中…";
     try {
-      await captureEmotionJpeg(getFrameSource(), overlayEl, currentEmotion);
+      await captureEmotionJpeg(
+        getFrameSource(),
+        overlayEl,
+        currentEmotion,
+        overlayMode,
+        videoStageEl
+      );
       msgEl.textContent = "Saved! / 已儲存至下載資料夾";
       // #region agent log
       fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:review',message:'photo saved',data:{sourceMode,emotion:currentEmotion,overlayMode},timestamp:Date.now(),hypothesisId:'H-shutter',runId:'post-fix'})}).catch(()=>{});

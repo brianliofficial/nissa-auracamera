@@ -1,5 +1,5 @@
 import type { EmotionKind } from "./emotions/detectEmotion";
-import { createVideoFrameSource, paintFreezeFrame } from "./screenshot";
+import { createVideoFrameSource, paintFreezeFrame, type CaptureOverlayMode } from "./screenshot";
 
 export const RECORD_DURATION_MS = 30_000;
 
@@ -45,6 +45,7 @@ export function createEmotionVideoRecorder(options: {
   overlayEl: HTMLElement;
   stageEl: HTMLElement;
   getEmotion: () => EmotionKind;
+  getOverlayMode: () => CaptureOverlayMode;
   onProgress?: (remainingSec: number, progress: number) => void;
   onMaxDuration?: (blob: Blob) => void;
 }): EmotionVideoRecorder {
@@ -65,6 +66,7 @@ export function createEmotionVideoRecorder(options: {
       source,
       options.overlayEl,
       options.getEmotion(),
+      options.getOverlayMode(),
       options.stageEl
     );
     rafId = requestAnimationFrame(paintFrame);
@@ -120,6 +122,7 @@ export function createEmotionVideoRecorder(options: {
         source,
         options.overlayEl,
         options.getEmotion(),
+        options.getOverlayMode(),
         options.stageEl
       );
       if (canvas.width <= 0 || canvas.height <= 0) {
