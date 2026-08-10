@@ -1,4 +1,9 @@
 /** Curated presets from https://uigradients.com */
+import {
+  overlayBlendMode,
+  scaledUiGradientOpacity,
+} from "../overlayOpacity";
+
 export interface UiGradient {
   id: string;
   name: string;
@@ -55,6 +60,8 @@ export function applyUiGradientLayer(
   }
   layer.hidden = false;
   layer.style.background = uiGradientCss(gradient);
+  layer.style.opacity = String(scaledUiGradientOpacity());
+  layer.style.mixBlendMode = overlayBlendMode();
 }
 
 export function readActiveUiGradient(overlay: HTMLElement): UiGradient | null {

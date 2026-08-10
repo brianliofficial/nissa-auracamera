@@ -2,6 +2,13 @@ import type { AuraBlobConfig } from "./emotions/auraOverlay";
 import { readAuraBlobColors } from "./emotions/auraOverlay";
 import type { EmotionKind } from "./emotions/detectEmotion";
 import { AURA_PRESETS } from "./emotions/auraOverlay";
+import {
+  getOverlayStrength,
+  isOverlayFullCover,
+  overlayBlendMode,
+  scaledAuraOpacity,
+  scaledUiGradientOpacity,
+} from "./overlayOpacity";
 import { getUiGradient, readActiveUiGradient, type UiGradient } from "./emotions/uiGradients";
 
 export type CaptureOverlayMode = "auto" | string;
@@ -229,20 +236,18 @@ function drawAuraOverlay(
 
   ctx.save();
   ctx.translate(-padX, -padY);
-  ctx.globalCompositeOperation = "screen";
+  ctx.globalCompositeOperation = overlayBlendMode() === "normal" ? "source-over" : "screen";
+  ctx.globalAlpha = scaledAuraOpacity();
   ctx.filter = `blur(${blur}px)`;
   for (const blob of blobs) {
     drawAuraBlob(ctx, drawW, drawH, blob);
   }
-  ctx.restore();
-
-  // Core pass — keeps centers vivid like live CSS stack
-  ctx.save();
-  ctx.translate(-padX, -padY);
-  ctx.globalCompositeOperation = "screen";
-  ctx.globalAlpha = 0.55;
-  for (const blob of blobs) {
-    drawAuraBlob(ctx, drawW, drawH, blob);
+  if (isOverlayFullCover()) {
+    ctx.globalAlpha = 1;
+    ctx.filter = `blur(${blur * 1.85}px)`;
+    for (const blob of blobs) {
+      drawAuraBlob(ctx, drawW, drawH, blob);
+    }
   }
   ctx.restore();
 }
@@ -281,11 +286,9 @@ function drawUiGradientOverlay(
   grad.addColorStop(1, gradient.to);
 
   ctx.save();
-  ctx.globalCompositeOperation = "screen";
-  ctx.globalAlpha = 0.72;
+  ctx.globalCompositeOperation = overlayBlendMode() === "normal" ? "source-over" : "screen";
+  ctx.globalAlpha = scaledUiGradientOpacity();
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, w, h);
-  ctx.globalAlpha = 0.55;
   ctx.fillRect(0, 0, w, h);
   ctx.restore();
 }
@@ -336,7 +339,7 @@ export function paintFreezeFrame(
   const overlayType = drawOverlayOnCanvas(ctx, cw, ch, overlayEl, emotion, overlayMode);
 
   // #region agent log
-  fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'screenshot.ts:paintFreezeFrame',message:'freeze painted',data:{vw,vh,cw,ch,emotion,overlayMode,overlayType,uiGradientId:overlayMode,datasetUiGradient:overlayEl.dataset.uiGradient,blurPx:overlayType==='aura'?auraBlurPx(emotion,ch):0,canvasW:canvas.width,canvasH:canvas.height,mirror:source.mirror},timestamp:Date.now(),hypothesisId:'H-capture-intensity',runId:'post-fix'})}).catch(()=>{});
+  fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'screenshot.ts:paintFreezeFrame',message:'freeze painted',data:{vw,vh,cw,ch,emotion,overlayMode,overlayType,sliderPercent:getOverlayStrength(),fullCover:isOverlayFullCover(),blendMode:overlayBlendMode(),uiGradientAlpha:overlayType==='ui-gradient'?scaledUiGradientOpacity():null,auraAlpha:overlayType==='aura'?scaledAuraOpacity():null,blurPx:overlayType==='aura'?auraBlurPx(emotion,ch):0,canvasW:canvas.width,canvasH:canvas.height,mirror:source.mirror},timestamp:Date.now(),hypothesisId:'H-opacity-full',runId:'vertical-slider-fullcover'})}).catch(()=>{});
   // #endregion
 
   return canvas.width > 0 && canvas.height > 0;

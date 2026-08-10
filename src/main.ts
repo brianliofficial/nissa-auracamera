@@ -36,6 +36,7 @@ import {
   downloadVideoBlob,
   type EmotionVideoRecorder,
 } from "./videoRecorder";
+import { setOverlayStrength, scaledAuraOpacity, scaledUiGradientOpacity, overlayBlendMode, isOverlayFullCover } from "./overlayOpacity";
 
 type OverlayMode = "auto" | string;
 type SourceMode = "camera" | "upload";
@@ -58,6 +59,7 @@ function applyOverlay(
 ): void {
   overlay.classList.remove("is-angry", "is-sad", "is-happy", "is-neutral");
   overlay.classList.add(`is-${emotion}`);
+  overlay.style.mixBlendMode = overlayBlendMode();
 
   if (overlayMode !== "auto") {
     neutralGradient.stop();
@@ -91,7 +93,7 @@ function updatePanel(
   emotion: EmotionState,
   overlayMode: OverlayMode
 ): void {
-  card.className = `emotion-inline emotion-${emotion.kind}`;
+  card.className = `emotion-status emotion-${emotion.kind}`;
   labelEn.textContent = emotion.labelEn;
   labelZh.textContent = emotion.labelZh;
   if (overlayMode !== "auto") {
@@ -184,6 +186,12 @@ async function bootstrap(): Promise<void> {
   const uploadedPhoto = document.getElementById("uploaded-photo");
   const photoUploadInput = document.getElementById("photo-upload-input");
   const btnUploadPhoto = document.getElementById("btn-upload-photo");
+  const overlayOpacity = document.getElementById("overlay-opacity");
+  const btnOpacityToggle = document.getElementById("btn-opacity-toggle");
+  const opacityControl = document.getElementById("opacity-control");
+  const opacitySliderPanel = document.getElementById("opacity-slider-panel");
+  const opacitySliderWidget = document.getElementById("opacity-slider-widget");
+  const opacityValueLabel = document.getElementById("opacity-value-label");
 
   if (
     !(msg instanceof HTMLElement) ||
@@ -213,7 +221,13 @@ async function bootstrap(): Promise<void> {
     !(recordedPlayback instanceof HTMLVideoElement) ||
     !(uploadedPhoto instanceof HTMLImageElement) ||
     !(photoUploadInput instanceof HTMLInputElement) ||
-    !(btnUploadPhoto instanceof HTMLButtonElement)
+    !(btnUploadPhoto instanceof HTMLButtonElement) ||
+    !(overlayOpacity instanceof HTMLInputElement) ||
+    !(btnOpacityToggle instanceof HTMLButtonElement) ||
+    !(opacityControl instanceof HTMLElement) ||
+    !(opacitySliderPanel instanceof HTMLElement) ||
+    !(opacitySliderWidget instanceof HTMLElement) ||
+    !(opacityValueLabel instanceof HTMLElement)
   ) {
     // #region agent log
     fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:bootstrap',message:'dom check failed',data:{msg:msg instanceof HTMLElement,video:video instanceof HTMLVideoElement,btnShutter:btnShutter instanceof HTMLButtonElement,reviewShutter:reviewShutter instanceof HTMLElement,captureFlash:captureFlash instanceof HTMLElement,captureFreeze:captureFreeze instanceof HTMLCanvasElement},timestamp:Date.now(),hypothesisId:'H-dom',runId:'post-fix'})}).catch(()=>{});
@@ -249,6 +263,23 @@ async function bootstrap(): Promise<void> {
   const uploadedPhotoEl = uploadedPhoto;
   const photoUploadInputEl = photoUploadInput;
   const btnUploadPhotoEl = btnUploadPhoto;
+  const overlayOpacityEl = overlayOpacity;
+  const btnOpacityToggleEl = btnOpacityToggle;
+  const opacityControlEl = opacityControl;
+  const opacitySliderPanelEl = opacitySliderPanel;
+  const opacitySliderWidgetEl = opacitySliderWidget;
+  const opacityValueLabelEl = opacityValueLabel;
+
+  const updateOpacityUi = (percent: number): void => {
+    const rounded = Math.round(percent);
+    overlayOpacityEl.value = String(rounded);
+    overlayOpacityEl.setAttribute("aria-valuenow", String(rounded));
+    overlayOpacityEl.setAttribute("aria-valuetext", `${rounded} percent`);
+    opacityValueLabelEl.textContent = String(rounded);
+    opacitySliderWidgetEl.style.setProperty("--opacity-pct", String(rounded));
+    setOverlayStrength(rounded);
+    syncOverlayOpacity();
+  };
 
   overlayEl.dataset.uiGradient = "auto";
   const auraLayer = ensureAuraLayer(overlayEl);
@@ -452,6 +483,20 @@ async function bootstrap(): Promise<void> {
     return true;
   };
 
+  function syncOverlayOpacity(): void {
+    overlayEl.style.mixBlendMode = overlayBlendMode();
+    if (overlayMode !== "auto") {
+      const g = getUiGradient(overlayMode);
+      applyUiGradientLayer(uiGradientLayer, g ?? null);
+      setAuraLayerVisible(auraLayer, false);
+    } else {
+      setAuraLayerVisible(auraLayer, true);
+    }
+    // #region agent log
+    fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:opacity',message:'overlay opacity synced',data:{percent:Number(overlayOpacityEl.value),fullCover:isOverlayFullCover(),blendMode:overlayBlendMode(),mappedUiAlpha:scaledUiGradientOpacity(),mappedAuraAlpha:scaledAuraOpacity(),overlayMode,auraOpacity:auraLayer.style.opacity,uiOpacity:uiGradientLayer.style.opacity},timestamp:Date.now(),hypothesisId:'H-opacity-full',runId:'vertical-slider-fullcover'})}).catch(()=>{});
+    // #endregion
+  }
+
   function refreshOverlay(): void {
     lastOverlayKey = "";
     syncOverlay(currentEmotion);
@@ -512,6 +557,52 @@ async function bootstrap(): Promise<void> {
       gradientMenuEl.hidden = true;
       gradientTriggerEl.setAttribute("aria-expanded", "false");
     }
+  });
+
+  setOverlayStrength(Number(overlayOpacityEl.value));
+  updateOpacityUi(Number(overlayOpacityEl.value));
+
+  const showOpacitySlider = (): void => {
+    opacityControlEl.classList.add("is-active");
+    opacitySliderPanelEl.hidden = false;
+    btnOpacityToggleEl.setAttribute("aria-expanded", "true");
+    updateOpacityUi(Number(overlayOpacityEl.value));
+    // #region agent log
+    fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:opacity-ui',message:'opacity slider opened',data:{percent:Number(overlayOpacityEl.value)},timestamp:Date.now(),hypothesisId:'H-opacity-ui',runId:'slider-below-btn'})}).catch(()=>{});
+    // #endregion
+  };
+
+  const hideOpacitySlider = (): void => {
+    if (!opacityControlEl.classList.contains("is-active")) return;
+    opacityControlEl.classList.remove("is-active");
+    opacitySliderPanelEl.hidden = true;
+    btnOpacityToggleEl.setAttribute("aria-expanded", "false");
+  };
+
+  btnOpacityToggleEl.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (opacitySliderPanelEl.hidden) {
+      showOpacitySlider();
+    } else {
+      hideOpacitySlider();
+    }
+  });
+
+  document.addEventListener("click", (e) => {
+    if (opacitySliderPanelEl.hidden) return;
+    if (e.target instanceof Node && opacityControlEl.contains(e.target)) return;
+    hideOpacitySlider();
+  });
+
+  overlayOpacityEl.addEventListener("input", () => {
+    updateOpacityUi(Number(overlayOpacityEl.value));
+    // #region agent log
+    fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:opacity-input',message:'opacity slider moved',data:{percent:Number(overlayOpacityEl.value),blendMode:overlayBlendMode(),uiAlpha:scaledUiGradientOpacity(),auraAlpha:scaledAuraOpacity()},timestamp:Date.now(),hypothesisId:'H-opacity-smooth',runId:'big-thumb-pct'})}).catch(()=>{});
+    // #endregion
+  });
+
+  overlayOpacityEl.addEventListener("change", () => {
+    hideOpacitySlider();
   });
 
   applyOverlay(

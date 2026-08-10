@@ -1,4 +1,5 @@
 import type { EmotionKind } from "./detectEmotion";
+import { overlayBlendMode, scaledAuraOpacity } from "../overlayOpacity";
 
 export interface AuraBlobConfig {
   x: number;
@@ -126,5 +127,6 @@ export function ensureAuraLayer(overlay: HTMLElement): HTMLElement {
 }
 
 export function setAuraLayerVisible(layer: HTMLElement, visible: boolean): void {
-  layer.style.opacity = visible ? "1" : "0";
+  layer.style.opacity = visible ? String(scaledAuraOpacity()) : "0";
+  layer.style.mixBlendMode = overlayBlendMode();
 }

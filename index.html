@@ -16,48 +16,110 @@
           <div id="capture-flash" class="capture-flash" aria-hidden="true"></div>
           <canvas id="capture-freeze" class="capture-freeze" aria-hidden="true"></canvas>
 
-          <header class="stage-chrome" aria-label="App chrome">
-            <div class="stage-left">
-              <h1 class="stage-title">nissa's auracamera</h1>
-              <div id="emotion-card" class="emotion-inline emotion-neutral" aria-live="polite">
-                <span class="emotion-label-en" id="emotion-label-en">Neutral</span>
-                <span class="emotion-label-sep" aria-hidden="true">·</span>
-                <span class="emotion-label-zh" id="emotion-label-zh">中性</span>
-              </div>
-            </div>
-            <div class="stage-controls" aria-label="Controls">
-              <div class="gradient-dropdown">
-                <button
-                  type="button"
-                  id="gradient-dropdown-trigger"
-                  class="gradient-dropdown-trigger"
-                  aria-haspopup="listbox"
-                  aria-expanded="false"
-                  aria-label="UI Gradients / 漸層選單"
+          <div class="stage-toolbar" aria-label="Controls">
+            <div class="opacity-control" id="opacity-control">
+              <button
+                type="button"
+                id="btn-opacity-toggle"
+                class="toolbar-btn"
+                aria-label="Opacity / 透明度"
+                aria-expanded="false"
+                aria-controls="opacity-slider-panel"
+              >
+                <svg
+                  class="toolbar-btn-icon"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.75"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
                 >
-                  <span id="gradient-trigger-swatch" class="gradient-trigger-swatch"></span>
-                  <span id="gradient-trigger-name" class="gradient-trigger-name">Auto / 自動</span>
-                  <span class="gradient-trigger-chevron" aria-hidden="true">▾</span>
-                </button>
-                <ul
-                  id="gradient-dropdown-menu"
-                  class="gradient-dropdown-menu"
-                  role="listbox"
-                  hidden
-                ></ul>
-              </div>
-
-              <input
-                type="file"
-                id="photo-upload-input"
-                class="visually-hidden"
-                accept="image/jpeg,image/png,image/webp,image/*"
-              />
-              <button type="button" id="btn-upload-photo" class="btn-media">
-                Upload / 上傳
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 3v18" />
+                  <path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" fill-opacity="0.35" stroke="none" />
+                </svg>
               </button>
+              <div class="opacity-slider-panel" id="opacity-slider-panel" hidden>
+                <div class="opacity-slider-widget" id="opacity-slider-widget">
+                  <div class="opacity-slider-tooltip-wrap" id="opacity-slider-tooltip-wrap">
+                    <span id="opacity-value-label" class="opacity-value-label" aria-live="polite">50</span>
+                  </div>
+                  <input
+                    type="range"
+                    id="overlay-opacity"
+                    class="opacity-slider opacity-slider--horizontal"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value="50"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    aria-valuenow="50"
+                    aria-valuetext="50 percent"
+                    aria-label="Opacity / 透明度"
+                  />
+                </div>
+              </div>
             </div>
-          </header>
+
+            <div class="gradient-dropdown">
+              <button
+                type="button"
+                id="gradient-dropdown-trigger"
+                class="toolbar-btn toolbar-btn--gradient"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+                aria-label="UI Gradients / 漸層選單"
+              >
+                <span id="gradient-trigger-swatch" class="gradient-trigger-swatch"></span>
+                <span id="gradient-trigger-name" class="visually-hidden">Auto / 自動</span>
+              </button>
+              <ul
+                id="gradient-dropdown-menu"
+                class="gradient-dropdown-menu"
+                role="listbox"
+                hidden
+              ></ul>
+            </div>
+
+            <input
+              type="file"
+              id="photo-upload-input"
+              class="visually-hidden"
+              accept="image/jpeg,image/png,image/webp,image/*"
+            />
+            <button
+              type="button"
+              id="btn-upload-photo"
+              class="toolbar-btn"
+              aria-label="Upload / 上傳"
+            >
+              <svg
+                class="toolbar-btn-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+            </button>
+          </div>
+
+          <h1 class="stage-title">nissa's auracamera</h1>
+
+          <div id="emotion-card" class="emotion-status emotion-neutral" aria-live="polite">
+            <span class="emotion-label-en" id="emotion-label-en">Neutral</span>
+            <span class="emotion-label-sep" aria-hidden="true">·</span>
+            <span class="emotion-label-zh" id="emotion-label-zh">中性</span>
+          </div>
 
           <div class="shutter-dock" id="shutter-dock">
             <div class="live-shutter" id="live-shutter">
