@@ -1,5 +1,12 @@
 import "./styles.css";
-import { disposeCamera, startCamera } from "./camera";
+import {
+  disposeCamera,
+  hasMultipleCameras,
+  isMobileLikeDevice,
+  shouldMirrorCamera,
+  startCamera,
+  switchCamera,
+} from "./camera";
 import { createFaceDetector } from "./detectors";
 import {
   applyAuraPreset,
@@ -186,6 +193,7 @@ async function bootstrap(): Promise<void> {
   const uploadedPhoto = document.getElementById("uploaded-photo");
   const photoUploadInput = document.getElementById("photo-upload-input");
   const btnUploadPhoto = document.getElementById("btn-upload-photo");
+  const btnFlipCamera = document.getElementById("btn-flip-camera");
   const overlayOpacity = document.getElementById("overlay-opacity");
   const btnOpacityToggle = document.getElementById("btn-opacity-toggle");
   const opacityControl = document.getElementById("opacity-control");
@@ -222,6 +230,7 @@ async function bootstrap(): Promise<void> {
     !(uploadedPhoto instanceof HTMLImageElement) ||
     !(photoUploadInput instanceof HTMLInputElement) ||
     !(btnUploadPhoto instanceof HTMLButtonElement) ||
+    !(btnFlipCamera instanceof HTMLButtonElement) ||
     !(overlayOpacity instanceof HTMLInputElement) ||
     !(btnOpacityToggle instanceof HTMLButtonElement) ||
     !(opacityControl instanceof HTMLElement) ||
@@ -263,6 +272,7 @@ async function bootstrap(): Promise<void> {
   const uploadedPhotoEl = uploadedPhoto;
   const photoUploadInputEl = photoUploadInput;
   const btnUploadPhotoEl = btnUploadPhoto;
+  const btnFlipCameraEl = btnFlipCamera;
   const overlayOpacityEl = overlayOpacity;
   const btnOpacityToggleEl = btnOpacityToggle;
   const opacityControlEl = opacityControl;
@@ -279,6 +289,10 @@ async function bootstrap(): Promise<void> {
     opacitySliderWidgetEl.style.setProperty("--opacity-pct", String(rounded));
     setOverlayStrength(rounded);
     syncOverlayOpacity();
+  };
+
+  const applyCameraMirror = (): void => {
+    videoEl.classList.toggle("is-mirrored", shouldMirrorCamera());
   };
 
   overlayEl.dataset.uiGradient = "auto";
@@ -307,6 +321,18 @@ async function bootstrap(): Promise<void> {
   let recordedPlaybackUrl: string | null = null;
   let activePointerId: number | null = null;
   let finishingRecording = false;
+
+  const syncFlipCameraButton = async (): Promise<void> => {
+    const show =
+      isMobileLikeDevice() &&
+      cameraActive &&
+      sourceMode === "camera" &&
+      !frameFrozen &&
+      !isRecording &&
+      reviewKind !== "video" &&
+      (await hasMultipleCameras());
+    btnFlipCameraEl.hidden = !show;
+  };
 
   const clearReviewVideo = (): void => {
     recordedVideoBlob = null;
@@ -410,6 +436,7 @@ async function bootstrap(): Promise<void> {
     neutralGradient.stop();
     refreshOverlay();
     msgEl.textContent = "Photo loaded / 照片已載入";
+    void syncFlipCameraButton();
   };
 
   const showCameraMode = (): void => {
@@ -432,6 +459,7 @@ async function bootstrap(): Promise<void> {
     msgEl.textContent = cameraActive
       ? "Camera active / 鏡頭已開啟"
       : msgEl.textContent;
+    void syncFlipCameraButton();
   };
 
   const resumeLivePreview = async (): Promise<boolean> => {
@@ -457,6 +485,7 @@ async function bootstrap(): Promise<void> {
           playOk = true;
           restarted = true;
           cameraActive = true;
+          applyCameraMirror();
           videoStageEl.classList.add("is-active");
           btnShutterEl.disabled = false;
         } catch (e) {
@@ -480,6 +509,7 @@ async function bootstrap(): Promise<void> {
     }
 
     refreshOverlay();
+    void syncFlipCameraButton();
     return true;
   };
 
@@ -648,6 +678,7 @@ async function bootstrap(): Promise<void> {
     videoEl.pause();
     videoStageEl.classList.add("is-frozen");
     setShutterDock("review");
+    void syncFlipCameraButton();
     msgEl.textContent = "Ready to save / 可以儲存了";
   };
 
@@ -661,6 +692,7 @@ async function bootstrap(): Promise<void> {
     btnShutterEl.setPointerCapture(pointerId);
     btnShutterEl.disabled = true;
     setRecordingUi(true, 0);
+    void syncFlipCameraButton();
     msgEl.textContent = "Recording… release to stop / 錄影中，放開停止";
 
     videoRecorder = createEmotionVideoRecorder({
@@ -718,6 +750,7 @@ async function bootstrap(): Promise<void> {
         longPressTriggered = false;
         setRecordingUi(false, 0);
         btnShutterEl.disabled = !cameraActive;
+        void syncFlipCameraButton();
         msgEl.textContent =
           e instanceof Error ? e.message : "Recording failed / 錄影失敗";
         return;
@@ -728,6 +761,7 @@ async function bootstrap(): Promise<void> {
     finishingRecording = false;
     longPressTriggered = false;
     setRecordingUi(false, 0);
+    void syncFlipCameraButton();
 
     if (!blob || blob.size === 0) {
       btnShutterEl.disabled = !cameraActive;
@@ -863,6 +897,39 @@ async function bootstrap(): Promise<void> {
     }
   });
 
+  btnFlipCameraEl.addEventListener("click", async () => {
+    if (
+      !cameraActive ||
+      frameFrozen ||
+      isRecording ||
+      sourceMode !== "camera" ||
+      reviewKind === "video"
+    ) {
+      return;
+    }
+
+    btnFlipCameraEl.disabled = true;
+    try {
+      const facing = await switchCamera(videoEl);
+      applyCameraMirror();
+      msgEl.textContent =
+        facing === "user"
+          ? "Front camera / 前鏡頭"
+          : "Back camera / 後鏡頭";
+      // #region agent log
+      fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:flip-camera',message:'camera switched',data:{facing,mirror:shouldMirrorCamera()},timestamp:Date.now(),hypothesisId:'H-flip-camera',runId:'flip-camera'})}).catch(()=>{});
+      // #endregion
+    } catch (e) {
+      msgEl.textContent =
+        e instanceof Error
+          ? e.message
+          : "Could not switch camera / 無法切換鏡頭";
+    } finally {
+      btnFlipCameraEl.disabled = false;
+      void syncFlipCameraButton();
+    }
+  });
+
   photoUploadInputEl.addEventListener("change", () => {
     const file = photoUploadInputEl.files?.[0];
     photoUploadInputEl.value = "";
@@ -891,9 +958,11 @@ async function bootstrap(): Promise<void> {
 
     try {
       await startCamera(videoEl);
+      applyCameraMirror();
       videoStageEl.classList.add("is-active");
       cameraActive = true;
       btnShutterEl.disabled = false;
+      void syncFlipCameraButton();
       // #region agent log
       fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:startApp',message:'camera started',data:{videoWidth:videoEl.videoWidth,videoHeight:videoEl.videoHeight,paused:videoEl.paused},timestamp:Date.now(),hypothesisId:'H-camera',runId:'post-fix'})}).catch(()=>{});
       // #endregion

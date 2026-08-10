@@ -10,6 +10,7 @@ import {
   scaledUiGradientOpacity,
 } from "./overlayOpacity";
 import { getUiGradient, readActiveUiGradient, type UiGradient } from "./emotions/uiGradients";
+import { shouldMirrorCamera } from "./camera";
 
 export type CaptureOverlayMode = "auto" | string;
 
@@ -31,20 +32,21 @@ export interface FrameSource {
 }
 
 export function createVideoFrameSource(video: HTMLVideoElement): FrameSource {
+  const mirror = shouldMirrorCamera();
   return {
     width: video.videoWidth,
     height: video.videoHeight,
-    mirror: true,
+    mirror,
     drawCover(ctx, _cw, _ch, rect) {
       ctx.save();
-      ctx.scale(-1, 1);
+      if (mirror) ctx.scale(-1, 1);
       ctx.drawImage(
         video,
         rect.sx,
         rect.sy,
         rect.sw,
         rect.sh,
-        -rect.dx - rect.dw,
+        mirror ? -rect.dx - rect.dw : rect.dx,
         rect.dy,
         rect.dw,
         rect.dh
@@ -53,14 +55,14 @@ export function createVideoFrameSource(video: HTMLVideoElement): FrameSource {
     },
     drawSquare(ctx, outSize, crop) {
       ctx.save();
-      ctx.scale(-1, 1);
+      if (mirror) ctx.scale(-1, 1);
       ctx.drawImage(
         video,
         crop.sx,
         crop.sy,
         crop.size,
         crop.size,
-        -outSize,
+        mirror ? -outSize : 0,
         0,
         outSize,
         outSize
