@@ -113,7 +113,15 @@ function drawOverlayOnCanvas(
     readAuraBlobColors(auraLayer).length > 0
       ? readAuraBlobColors(auraLayer)
       : AURA_PRESETS[emotion].blobs;
-  drawAuraOverlay(ctx, w, h, blobs);
+  drawAuraOverlay(ctx, w, h, blobs, emotion);
+}
+
+const AURA_LAYER_INSET = 0.12;
+
+function auraBlurPx(emotion: EmotionKind, h: number): number {
+  const base = emotion === "neutral" ? 38 : 48;
+  const refH = Math.max(window.innerHeight, 1);
+  return base * (h / refH);
 }
 
 function pad(n: number): string {
@@ -175,13 +183,14 @@ function drawAuraBlob(
 ): void {
   const cx = (blob.x / 100) * w;
   const cy = (blob.y / 100) * h;
-  const radius = (blob.size / 100) * Math.max(w, h) * 0.55;
+  const radius = (blob.size / 100) * Math.max(w, h) * 0.62;
   const [r, g, b, a] = parseRgba(blob.color);
 
   const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
-  grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${Math.min(1, a * 1.1)})`);
-  grad.addColorStop(0.35, `rgba(${r}, ${g}, ${b}, ${a * 0.75})`);
-  grad.addColorStop(0.65, `rgba(${r}, ${g}, ${b}, ${a * 0.25})`);
+  grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${Math.min(1, a * 1.15)})`);
+  grad.addColorStop(0.28, `rgba(${r}, ${g}, ${b}, ${a * 0.92})`);
+  grad.addColorStop(0.55, `rgba(${r}, ${g}, ${b}, ${a * 0.55})`);
+  grad.addColorStop(0.78, `rgba(${r}, ${g}, ${b}, ${a * 0.22})`);
   grad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
 
   ctx.fillStyle = grad;
@@ -194,12 +203,32 @@ function drawAuraOverlay(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
-  blobs: AuraBlobConfig[]
+  blobs: AuraBlobConfig[],
+  emotion: EmotionKind
 ): void {
+  const inset = AURA_LAYER_INSET;
+  const padX = w * inset;
+  const padY = h * inset;
+  const drawW = w + padX * 2;
+  const drawH = h + padY * 2;
+  const blur = auraBlurPx(emotion, h);
+
   ctx.save();
+  ctx.translate(-padX, -padY);
   ctx.globalCompositeOperation = "screen";
+  ctx.filter = `blur(${blur}px)`;
   for (const blob of blobs) {
-    drawAuraBlob(ctx, w, h, blob);
+    drawAuraBlob(ctx, drawW, drawH, blob);
+  }
+  ctx.restore();
+
+  // Core pass — keeps centers vivid like live CSS stack
+  ctx.save();
+  ctx.translate(-padX, -padY);
+  ctx.globalCompositeOperation = "screen";
+  ctx.globalAlpha = 0.55;
+  for (const blob of blobs) {
+    drawAuraBlob(ctx, drawW, drawH, blob);
   }
   ctx.restore();
 }
@@ -228,6 +257,8 @@ function drawUiGradientOverlay(
   ctx.globalCompositeOperation = "screen";
   ctx.globalAlpha = 0.72;
   ctx.fillStyle = cssGradient;
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalAlpha = 0.28;
   ctx.fillRect(0, 0, w, h);
   ctx.restore();
 }
@@ -276,8 +307,11 @@ export function paintFreezeFrame(
   source.drawCover(ctx, cw, ch, rect);
   drawOverlayOnCanvas(ctx, cw, ch, overlayEl, emotion);
 
+  const auraLayer = overlayEl.querySelector(".aura-layer");
+  const blobCount =
+    auraLayer instanceof HTMLElement ? readAuraBlobColors(auraLayer).length : 0;
   // #region agent log
-  fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'screenshot.ts:paintFreezeFrame',message:'freeze painted',data:{vw,vh,cw,ch,canvasW:canvas.width,canvasH:canvas.height,mirror:source.mirror},timestamp:Date.now(),hypothesisId:'H-upload',runId:'post-fix'})}).catch(()=>{});
+  fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'screenshot.ts:paintFreezeFrame',message:'freeze painted',data:{vw,vh,cw,ch,emotion,blobCount,blurPx:auraBlurPx(emotion,ch),canvasW:canvas.width,canvasH:canvas.height,mirror:source.mirror},timestamp:Date.now(),hypothesisId:'H-capture-intensity',runId:'post-fix'})}).catch(()=>{});
   // #endregion
 
   return canvas.width > 0 && canvas.height > 0;
@@ -315,7 +349,7 @@ export async function captureEmotionJpeg(
     canvas.toBlob(
       (b) => (b ? resolve(b) : reject(new Error("JPEG export failed."))),
       "image/jpeg",
-      0.92
+      0.97
     );
   });
 
