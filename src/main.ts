@@ -31,14 +31,20 @@ import {
   uiGradientCss,
 } from "./emotions/uiGradients";
 import {
-  captureEmotionJpeg,
+  exportEmotionJpegBlob,
   createImageFrameSource,
   createVideoFrameSource,
-  paintFreezeFrame,
   type FrameSource,
 } from "./screenshot";
 import {
+  blitCanvas,
+  captureLiveStage,
+  captureLiveStageBlob,
+} from "./stageCapture";
+import {
+  applyWatermarkToBlob,
   blobFromReviewCanvas,
+  downloadPhotoBlob,
   SHARE_PLATFORMS,
   shareReviewPhoto,
 } from "./sharePhoto";
@@ -54,6 +60,7 @@ type OverlayMode = "auto" | string;
 type SourceMode = "camera" | "upload";
 type DockView = "live" | "review";
 type ReviewKind = "photo" | "video" | null;
+type ReviewButtonMode = ReviewKind | "upload";
 
 const LONG_PRESS_MS = 500;
 
@@ -363,10 +370,10 @@ async function bootstrap(): Promise<void> {
     overlayEl.style.visibility = "";
   };
 
-  const setReviewButtons = (kind: ReviewKind): void => {
-    const isVideo = kind === "video";
-    const isPhoto = kind === "photo";
-    btnReviewShareEl.hidden = !isPhoto;
+  const setReviewButtons = (mode: ReviewButtonMode | null): void => {
+    const isVideo = mode === "video";
+    const canShare = mode === "photo" || mode === "upload";
+    btnReviewShareEl.hidden = !canShare;
     shareSheetEl.hidden = true;
     btnReviewShareEl.setAttribute("aria-expanded", "false");
     btnReviewCancelEl.classList.toggle("is-delete", isVideo);
@@ -449,7 +456,7 @@ async function bootstrap(): Promise<void> {
     uploadActive = true;
     videoStageEl.classList.add("is-upload-mode");
     uploadedPhotoEl.hidden = false;
-    setReviewButtons(null);
+    setReviewButtons("upload");
     setShutterDock("review");
     neutralGradient.stop();
     refreshOverlay();
@@ -676,15 +683,14 @@ async function bootstrap(): Promise<void> {
 
     await playShutterSound();
     flashCapture(captureFlashEl);
-    const painted = paintFreezeFrame(
-      captureFreezeEl,
-      getFrameSource(),
-      overlayEl,
-      currentEmotion,
-      overlayMode,
-      videoStageEl
-    );
-    if (!painted) {
+    try {
+      const stageCanvas = await captureLiveStage(videoStageEl);
+      const painted = blitCanvas(captureFreezeEl, stageCanvas);
+      if (!painted) {
+        msgEl.textContent = "Capture failed / 拍照失敗，請再試一次";
+        return;
+      }
+    } catch {
       msgEl.textContent = "Capture failed / 拍照失敗，請再試一次";
       return;
     }
@@ -854,6 +860,29 @@ async function bootstrap(): Promise<void> {
     photoUploadInputEl.click();
   });
 
+  const canSharePhoto = (): boolean => {
+    if (sourceMode === "upload" && uploadActive) return true;
+    return (
+      reviewKind === "photo" &&
+      captureFreezeEl.classList.contains("is-visible")
+    );
+  };
+
+  const getShareablePhotoBlob = async (): Promise<Blob> => {
+    let base: Blob;
+    if (sourceMode === "upload" && uploadActive) {
+      base = await captureLiveStageBlob(videoStageEl);
+    } else if (
+      reviewKind === "photo" &&
+      captureFreezeEl.classList.contains("is-visible")
+    ) {
+      base = await blobFromReviewCanvas(captureFreezeEl);
+    } else {
+      throw new Error("No photo ready to share / 沒有可分享的照片");
+    }
+    return applyWatermarkToBlob(base);
+  };
+
   const closeShareSheet = (): void => {
     shareSheetEl.hidden = true;
     btnReviewShareEl.setAttribute("aria-expanded", "false");
@@ -871,12 +900,10 @@ async function bootstrap(): Promise<void> {
     btn.dataset.platform = platform.id;
     btn.innerHTML = `<span class="share-platform-mark" style="background:${platform.accent}">${platform.shortLabel}</span><span class="share-platform-label">${platform.label}</span>`;
     btn.addEventListener("click", async () => {
-      if (reviewKind !== "photo" || !captureFreezeEl.classList.contains("is-visible")) {
-        return;
-      }
+      if (!canSharePhoto()) return;
       msgEl.textContent = "Preparing share… / 準備分享中…";
       try {
-        const blob = await blobFromReviewCanvas(captureFreezeEl);
+        const blob = await getShareablePhotoBlob();
         const result = await shareReviewPhoto(blob, platform.id);
         if (result === "shared") {
           msgEl.textContent = "Shared! / 已分享";
@@ -887,7 +914,7 @@ async function bootstrap(): Promise<void> {
         }
         closeShareSheet();
         // #region agent log
-        fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:share',message:'photo shared',data:{platform:platform.id,result},timestamp:Date.now(),hypothesisId:'H-share',runId:'share-photo'})}).catch(()=>{});
+        fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:share',message:'photo shared',data:{platform:platform.id,result,sourceMode,reviewKind},timestamp:Date.now(),hypothesisId:'H-share',runId:'share-upload'})}).catch(()=>{});
         // #endregion
       } catch (e) {
         msgEl.textContent =
@@ -898,7 +925,7 @@ async function bootstrap(): Promise<void> {
   }
 
   btnReviewShareEl.addEventListener("click", () => {
-    if (reviewKind !== "photo") return;
+    if (!canSharePhoto()) return;
     if (shareSheetEl.hidden) {
       openShareSheet();
     } else {
@@ -926,16 +953,29 @@ async function bootstrap(): Promise<void> {
     if (sourceMode === "camera" && !frameFrozen) return;
     msgEl.textContent = "Saving JPG… / 儲存中…";
     try {
-      await captureEmotionJpeg(
-        getFrameSource(),
-        overlayEl,
-        currentEmotion,
-        overlayMode,
-        videoStageEl
-      );
+      if (
+        sourceMode === "camera" &&
+        reviewKind === "photo" &&
+        captureFreezeEl.classList.contains("is-visible")
+      ) {
+        const blob = await blobFromReviewCanvas(captureFreezeEl);
+        downloadPhotoBlob(blob);
+      } else if (sourceMode === "upload" && uploadActive) {
+        const blob = await captureLiveStageBlob(videoStageEl);
+        downloadPhotoBlob(blob);
+      } else {
+        const blob = await exportEmotionJpegBlob(
+          getFrameSource(),
+          overlayEl,
+          currentEmotion,
+          overlayMode,
+          videoStageEl
+        );
+        downloadPhotoBlob(blob);
+      }
       msgEl.textContent = "Saved! / 已儲存至下載資料夾";
       // #region agent log
-      fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:review',message:'photo saved',data:{sourceMode,emotion:currentEmotion,overlayMode},timestamp:Date.now(),hypothesisId:'H-shutter',runId:'post-fix'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:review',message:'photo saved',data:{sourceMode,emotion:currentEmotion,overlayMode,usedFreezeCanvas:sourceMode==='camera'&&reviewKind==='photo'},timestamp:Date.now(),hypothesisId:'H-overlay-match',runId:'overlay-consistency'})}).catch(()=>{});
       // #endregion
       if (sourceMode === "camera") {
         await resumeLivePreview();

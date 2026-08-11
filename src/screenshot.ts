@@ -10,7 +10,7 @@ import {
   scaledUiGradientOpacity,
 } from "./overlayOpacity";
 import { getUiGradient, readActiveUiGradient, type UiGradient } from "./emotions/uiGradients";
-import { reviewPhotoFilename } from "./sharePhoto";
+import { reviewPhotoFilename, blobFromReviewCanvas } from "./sharePhoto";
 import { shouldMirrorCamera } from "./camera";
 
 export type CaptureOverlayMode = "auto" | string;
@@ -142,10 +142,9 @@ function drawOverlayOnCanvas(
 
 const AURA_LAYER_INSET = 0.12;
 
-function auraBlurPx(emotion: EmotionKind, h: number): number {
-  const base = emotion === "neutral" ? 38 : 48;
-  const refH = Math.max(window.innerHeight, 1);
-  return base * (h / refH);
+/** Match live CSS `.aura-blob` blur (38px neutral, 48px emotions). */
+function auraBlurPx(emotion: EmotionKind): number {
+  return emotion === "neutral" ? 38 : 48;
 }
 
 function parseRgba(color: string): [number, number, number, number] {
@@ -226,7 +225,7 @@ function drawAuraOverlay(
   const padY = h * inset;
   const drawW = w + padX * 2;
   const drawH = h + padY * 2;
-  const blur = auraBlurPx(emotion, h);
+  const blur = auraBlurPx(emotion);
 
   ctx.save();
   ctx.translate(-padX, -padY);
@@ -301,6 +300,30 @@ function coverVideoRect(
   return { sx: 0, sy: 0, sw: vw, sh: vh, dx, dy, dw, dh };
 }
 
+function composePhotoCanvas(
+  canvas: HTMLCanvasElement,
+  source: FrameSource,
+  overlayEl: HTMLElement,
+  emotion: EmotionKind,
+  overlayMode: CaptureOverlayMode,
+  cw: number,
+  ch: number
+): "ui-gradient" | "aura" {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(cw * dpr);
+  canvas.height = Math.round(ch * dpr);
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not create canvas context.");
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cw, ch);
+
+  const rect = coverVideoRect(source.width, source.height, cw, ch);
+  source.drawCover(ctx, cw, ch, rect);
+  return drawOverlayOnCanvas(ctx, cw, ch, overlayEl, emotion, overlayMode);
+}
+
 /** Paint the visible preview (cover fit) for on-screen freeze. */
 export function paintFreezeFrame(
   canvas: HTMLCanvasElement,
@@ -318,25 +341,60 @@ export function paintFreezeFrame(
   const ch = stageEl?.clientHeight ?? 0;
   if (cw <= 0 || ch <= 0) return false;
 
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = Math.round(cw * dpr);
-  canvas.height = Math.round(ch * dpr);
-
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return false;
-
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, cw, ch);
-
-  const rect = coverVideoRect(vw, vh, cw, ch);
-  source.drawCover(ctx, cw, ch, rect);
-  const overlayType = drawOverlayOnCanvas(ctx, cw, ch, overlayEl, emotion, overlayMode);
+  let overlayType: "ui-gradient" | "aura";
+  try {
+    overlayType = composePhotoCanvas(
+      canvas,
+      source,
+      overlayEl,
+      emotion,
+      overlayMode,
+      cw,
+      ch
+    );
+  } catch {
+    return false;
+  }
 
   // #region agent log
-  fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'screenshot.ts:paintFreezeFrame',message:'freeze painted',data:{vw,vh,cw,ch,emotion,overlayMode,overlayType,sliderPercent:getOverlayStrength(),fullCover:isOverlayFullCover(),blendMode:overlayBlendMode(),uiGradientAlpha:overlayType==='ui-gradient'?scaledUiGradientOpacity():null,auraAlpha:overlayType==='aura'?scaledAuraOpacity():null,blurPx:overlayType==='aura'?auraBlurPx(emotion,ch):0,canvasW:canvas.width,canvasH:canvas.height,mirror:source.mirror},timestamp:Date.now(),hypothesisId:'H-opacity-full',runId:'vertical-slider-fullcover'})}).catch(()=>{});
+  fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'screenshot.ts:paintFreezeFrame',message:'freeze painted',data:{vw,vh,cw,ch,emotion,overlayMode,overlayType,sliderPercent:getOverlayStrength(),fullCover:isOverlayFullCover(),blendMode:overlayBlendMode(),uiGradientAlpha:overlayType==='ui-gradient'?scaledUiGradientOpacity():null,auraAlpha:overlayType==='aura'?scaledAuraOpacity():null,blurPx:overlayType==='aura'?auraBlurPx(emotion):0,canvasW:canvas.width,canvasH:canvas.height,mirror:source.mirror},timestamp:Date.now(),hypothesisId:'H-overlay-match',runId:'overlay-consistency'})}).catch(()=>{});
   // #endregion
 
   return canvas.width > 0 && canvas.height > 0;
+}
+
+export async function exportEmotionJpegBlob(
+  source: FrameSource,
+  overlayEl: HTMLElement,
+  emotion: EmotionKind,
+  overlayMode: CaptureOverlayMode,
+  stageEl?: HTMLElement
+): Promise<Blob> {
+  const vw = source.width;
+  const vh = source.height;
+  if (vw <= 0 || vh <= 0) {
+    throw new Error("Image is not ready yet.");
+  }
+
+  const cw = stageEl?.clientWidth ?? vw;
+  const ch = stageEl?.clientHeight ?? vh;
+
+  const canvas = document.createElement("canvas");
+  const overlayType = composePhotoCanvas(
+    canvas,
+    source,
+    overlayEl,
+    emotion,
+    overlayMode,
+    cw,
+    ch
+  );
+
+  // #region agent log
+  fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'screenshot.ts:exportEmotionJpegBlob',message:'photo exported',data:{vw,vh,cw,ch,emotion,overlayMode,overlayType,sliderPercent:getOverlayStrength(),fullCover:isOverlayFullCover(),blendMode:overlayBlendMode(),uiGradientAlpha:overlayType==='ui-gradient'?scaledUiGradientOpacity():null,auraAlpha:overlayType==='aura'?scaledAuraOpacity():null,blurPx:overlayType==='aura'?auraBlurPx(emotion):0},timestamp:Date.now(),hypothesisId:'H-overlay-match',runId:'overlay-consistency'})}).catch(()=>{});
+  // #endregion
+
+  return blobFromReviewCanvas(canvas);
 }
 
 export async function captureEmotionJpeg(
@@ -346,39 +404,13 @@ export async function captureEmotionJpeg(
   overlayMode: CaptureOverlayMode,
   stageEl?: HTMLElement
 ): Promise<void> {
-  const vw = source.width;
-  const vh = source.height;
-  if (vw <= 0 || vh <= 0) {
-    throw new Error("Image is not ready yet.");
-  }
-
-  const cw = stageEl?.clientWidth ?? vw;
-  const ch = stageEl?.clientHeight ?? vh;
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.round(cw * dpr);
-  canvas.height = Math.round(ch * dpr);
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Could not create canvas context.");
-
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, cw, ch);
-  const rect = coverVideoRect(vw, vh, cw, ch);
-  source.drawCover(ctx, cw, ch, rect);
-  const overlayType = drawOverlayOnCanvas(ctx, cw, ch, overlayEl, emotion, overlayMode);
-
-  // #region agent log
-  fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'screenshot.ts:capture',message:'jpg captured',data:{vw,vh,cw,ch,overlayMode,overlayType,canvasW:canvas.width,canvasH:canvas.height},timestamp:Date.now(),hypothesisId:'H-capture-intensity',runId:'post-fix'})}).catch(()=>{});
-  // #endregion
-
-  const blob = await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
-      (b) => (b ? resolve(b) : reject(new Error("JPEG export failed."))),
-      "image/jpeg",
-      0.97
-    );
-  });
+  const blob = await exportEmotionJpegBlob(
+    source,
+    overlayEl,
+    emotion,
+    overlayMode,
+    stageEl
+  );
 
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
