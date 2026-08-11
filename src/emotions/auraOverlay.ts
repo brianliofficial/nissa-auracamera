@@ -88,19 +88,28 @@ export function getAuraSwatch(kind: EmotionKind): string {
     .join(", ");
 }
 
+function blobCssVar(el: HTMLElement, name: string, fallback: number): number {
+  const inline = parseFloat(el.style.getPropertyValue(name));
+  if (Number.isFinite(inline)) return inline;
+  const computed = parseFloat(getComputedStyle(el).getPropertyValue(name));
+  return Number.isFinite(computed) ? computed : fallback;
+}
+
 export function readAuraBlobColors(layer: HTMLElement): AuraBlobConfig[] {
   const blobEls = layer.querySelectorAll<HTMLElement>(".aura-blob");
   const result: AuraBlobConfig[] = [];
 
   blobEls.forEach((el) => {
-    if (el.style.opacity === "0") return;
-    const x = parseFloat(el.style.getPropertyValue("--blob-x")) || 50;
-    const y = parseFloat(el.style.getPropertyValue("--blob-y")) || 50;
-    const size = parseFloat(el.style.getPropertyValue("--blob-size")) || 50;
-    const color =
-      el.style.getPropertyValue("--blob-color").trim() ||
-      getComputedStyle(el).getPropertyValue("--blob-color").trim() ||
-      "rgba(255,255,255,0.4)";
+    const computed = getComputedStyle(el);
+    if (el.style.opacity === "0" || computed.opacity === "0") return;
+
+    const x = blobCssVar(el, "--blob-x", 50);
+    const y = blobCssVar(el, "--blob-y", 50);
+    const size = blobCssVar(el, "--blob-size", 50);
+    const color = computed.backgroundColor;
+    if (!color || color === "transparent" || color === "rgba(0, 0, 0, 0)") {
+      return;
+    }
     result.push({ x, y, size, color });
   });
 

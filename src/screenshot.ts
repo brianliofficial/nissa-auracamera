@@ -123,7 +123,8 @@ function drawOverlayOnCanvas(
   h: number,
   overlayEl: HTMLElement,
   emotion: EmotionKind,
-  overlayMode: CaptureOverlayMode
+  overlayMode: CaptureOverlayMode,
+  recording = false
 ): "ui-gradient" | "aura" {
   const uiGrad = resolveUiGradient(overlayEl, overlayMode);
   if (uiGrad) {
@@ -136,8 +137,28 @@ function drawOverlayOnCanvas(
     readAuraBlobColors(auraLayer).length > 0
       ? readAuraBlobColors(auraLayer)
       : AURA_PRESETS[emotion].blobs;
-  drawAuraOverlay(ctx, w, h, blobs, emotion);
+  drawAuraOverlay(ctx, w, h, blobs, emotion, recording);
   return "aura";
+}
+
+function ensureCanvasSize(
+  canvas: HTMLCanvasElement,
+  cw: number,
+  ch: number
+): CanvasRenderingContext2D {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const targetW = Math.round(cw * dpr);
+  const targetH = Math.round(ch * dpr);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not create canvas context.");
+
+  if (canvas.width !== targetW || canvas.height !== targetH) {
+    canvas.width = targetW;
+    canvas.height = targetH;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  return ctx;
 }
 
 const AURA_LAYER_INSET = 0.12;
@@ -193,19 +214,29 @@ function drawAuraBlob(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
-  blob: AuraBlobConfig
+  blob: AuraBlobConfig,
+  soft = false
 ): void {
   const cx = (blob.x / 100) * w;
   const cy = (blob.y / 100) * h;
-  const radius = (blob.size / 100) * Math.max(w, h) * 0.62;
+  const radiusScale = soft ? 0.74 : 0.62;
+  const radius = (blob.size / 100) * Math.max(w, h) * radiusScale;
   const [r, g, b, a] = parseRgba(blob.color);
 
   const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
-  grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${Math.min(1, a * 1.15)})`);
-  grad.addColorStop(0.28, `rgba(${r}, ${g}, ${b}, ${a * 0.92})`);
-  grad.addColorStop(0.55, `rgba(${r}, ${g}, ${b}, ${a * 0.55})`);
-  grad.addColorStop(0.78, `rgba(${r}, ${g}, ${b}, ${a * 0.22})`);
-  grad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+  if (soft) {
+    grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${Math.min(1, a * 1.05)})`);
+    grad.addColorStop(0.2, `rgba(${r}, ${g}, ${b}, ${a * 0.82})`);
+    grad.addColorStop(0.45, `rgba(${r}, ${g}, ${b}, ${a * 0.48})`);
+    grad.addColorStop(0.68, `rgba(${r}, ${g}, ${b}, ${a * 0.18})`);
+    grad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+  } else {
+    grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${Math.min(1, a * 1.15)})`);
+    grad.addColorStop(0.28, `rgba(${r}, ${g}, ${b}, ${a * 0.92})`);
+    grad.addColorStop(0.55, `rgba(${r}, ${g}, ${b}, ${a * 0.55})`);
+    grad.addColorStop(0.78, `rgba(${r}, ${g}, ${b}, ${a * 0.22})`);
+    grad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+  }
 
   ctx.fillStyle = grad;
   ctx.beginPath();
@@ -218,30 +249,43 @@ function drawAuraOverlay(
   w: number,
   h: number,
   blobs: AuraBlobConfig[],
-  emotion: EmotionKind
+  emotion: EmotionKind,
+  recording = false
 ): void {
   const inset = AURA_LAYER_INSET;
   const padX = w * inset;
   const padY = h * inset;
   const drawW = w + padX * 2;
   const drawH = h + padY * 2;
-  const blur = auraBlurPx(emotion);
 
   ctx.save();
   ctx.translate(-padX, -padY);
   ctx.globalCompositeOperation = overlayBlendMode() === "normal" ? "source-over" : "screen";
   ctx.globalAlpha = scaledAuraOpacity();
-  ctx.filter = `blur(${blur}px)`;
-  for (const blob of blobs) {
-    drawAuraBlob(ctx, drawW, drawH, blob);
+
+  if (!recording) {
+    const blur = auraBlurPx(emotion);
+    ctx.filter = `blur(${blur}px)`;
   }
-  if (isOverlayFullCover()) {
+
+  for (const blob of blobs) {
+    drawAuraBlob(ctx, drawW, drawH, blob, recording);
+  }
+
+  if (!recording && isOverlayFullCover()) {
+    const blur = auraBlurPx(emotion);
     ctx.globalAlpha = 1;
     ctx.filter = `blur(${blur * 1.85}px)`;
     for (const blob of blobs) {
-      drawAuraBlob(ctx, drawW, drawH, blob);
+      drawAuraBlob(ctx, drawW, drawH, blob, false);
+    }
+  } else if (recording && isOverlayFullCover()) {
+    ctx.globalAlpha = 1;
+    for (const blob of blobs) {
+      drawAuraBlob(ctx, drawW, drawH, blob, true);
     }
   }
+
   ctx.restore();
 }
 
@@ -307,21 +351,41 @@ function composePhotoCanvas(
   emotion: EmotionKind,
   overlayMode: CaptureOverlayMode,
   cw: number,
-  ch: number
+  ch: number,
+  recording = false
 ): "ui-gradient" | "aura" {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = Math.round(cw * dpr);
-  canvas.height = Math.round(ch * dpr);
-
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Could not create canvas context.");
-
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const ctx = ensureCanvasSize(canvas, cw, ch);
   ctx.clearRect(0, 0, cw, ch);
 
   const rect = coverVideoRect(source.width, source.height, cw, ch);
   source.drawCover(ctx, cw, ch, rect);
-  return drawOverlayOnCanvas(ctx, cw, ch, overlayEl, emotion, overlayMode);
+  return drawOverlayOnCanvas(ctx, cw, ch, overlayEl, emotion, overlayMode, recording);
+}
+
+/** Fast per-frame compositor for video recording — reads live CSS overlay colors. */
+export function paintRecordingFrame(
+  canvas: HTMLCanvasElement,
+  source: FrameSource,
+  overlayEl: HTMLElement,
+  emotion: EmotionKind,
+  overlayMode: CaptureOverlayMode,
+  stageEl: HTMLElement
+): boolean {
+  const vw = source.width;
+  const vh = source.height;
+  if (vw <= 0 || vh <= 0) return false;
+
+  const cw = stageEl.clientWidth;
+  const ch = stageEl.clientHeight;
+  if (cw <= 0 || ch <= 0) return false;
+
+  try {
+    composePhotoCanvas(canvas, source, overlayEl, emotion, overlayMode, cw, ch, true);
+  } catch {
+    return false;
+  }
+
+  return canvas.width > 0 && canvas.height > 0;
 }
 
 /** Paint the visible preview (cover fit) for on-screen freeze. */

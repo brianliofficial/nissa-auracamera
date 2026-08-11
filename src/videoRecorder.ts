@@ -1,5 +1,6 @@
 import type { EmotionKind } from "./emotions/detectEmotion";
-import { createVideoFrameSource, paintFreezeFrame, type CaptureOverlayMode } from "./screenshot";
+import { createVideoFrameSource, paintRecordingFrame, type CaptureOverlayMode } from "./screenshot";
+import { getOverlayStrength } from "./overlayOpacity";
 
 export const RECORD_DURATION_MS = 30_000;
 
@@ -57,11 +58,15 @@ export function createEmotionVideoRecorder(options: {
   let progressTimer = 0;
   let maxDurationTimer = 0;
   let active = false;
+  let frameCount = 0;
+  let lastFrameLogAt = 0;
+  let lastPaintMs = 0;
 
   const paintFrame = (): void => {
     if (!active) return;
+    const t0 = performance.now();
     const source = createVideoFrameSource(options.video);
-    paintFreezeFrame(
+    paintRecordingFrame(
       canvas,
       source,
       options.overlayEl,
@@ -69,6 +74,17 @@ export function createEmotionVideoRecorder(options: {
       options.getOverlayMode(),
       options.stageEl
     );
+    lastPaintMs = performance.now() - t0;
+    frameCount += 1;
+
+    const now = performance.now();
+    if (now - lastFrameLogAt >= 1000) {
+      lastFrameLogAt = now;
+      // #region agent log
+      fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'videoRecorder.ts:paintFrame',message:'recording frame stats',data:{frameCount,paintMs:lastPaintMs,sliderPercent:getOverlayStrength(),emotion:options.getEmotion(),overlayMode:options.getOverlayMode()},timestamp:Date.now(),hypothesisId:'H-record-perf',runId:'record-smooth-v1'})}).catch(()=>{});
+      // #endregion
+    }
+
     rafId = requestAnimationFrame(paintFrame);
   };
 
@@ -117,7 +133,7 @@ export function createEmotionVideoRecorder(options: {
         throw new Error("Camera is not ready / 鏡頭尚未就緒");
       }
 
-      paintFreezeFrame(
+      paintRecordingFrame(
         canvas,
         source,
         options.overlayEl,
@@ -137,7 +153,7 @@ export function createEmotionVideoRecorder(options: {
       chunks = [];
       active = true;
 
-      const stream = canvas.captureStream(30);
+      const stream = canvas.captureStream(0);
       recorder = new MediaRecorder(stream, {
         mimeType,
         videoBitsPerSecond: 2_500_000,
