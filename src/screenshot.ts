@@ -344,6 +344,8 @@ function coverVideoRect(
   return { sx: 0, sy: 0, sw: vw, sh: vh, dx, dy, dw, dh };
 }
 
+export { coverVideoRect };
+
 function composePhotoCanvas(
   canvas: HTMLCanvasElement,
   source: FrameSource,

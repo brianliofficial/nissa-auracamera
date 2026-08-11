@@ -12,6 +12,7 @@
           <video id="camera" playsinline muted autoplay class="camera"></video>
           <video id="recorded-playback" class="recorded-playback" playsinline loop muted hidden></video>
           <img id="uploaded-photo" class="uploaded-photo" alt="" hidden />
+          <canvas id="aura-canvas" class="aura-canvas" aria-hidden="true"></canvas>
           <div id="emotion-overlay" class="emotion-overlay" aria-hidden="true"></div>
           <div id="capture-flash" class="capture-flash" aria-hidden="true"></div>
           <canvas id="capture-freeze" class="capture-freeze" aria-hidden="true"></canvas>
@@ -71,7 +72,7 @@
                 class="toolbar-btn toolbar-btn--gradient"
                 aria-haspopup="listbox"
                 aria-expanded="false"
-                aria-label="UI Gradients / 漸層選單"
+                aria-label="Aura Gradients / Aura 漸層選單"
               >
                 <span id="gradient-trigger-swatch" class="gradient-trigger-swatch"></span>
                 <span id="gradient-trigger-name" class="visually-hidden">Auto / 自動</span>
@@ -222,7 +223,6 @@
                 aria-label="Share / 分享"
                 aria-expanded="false"
                 aria-controls="share-sheet"
-                hidden
               >
                 <svg
                   class="btn-shutter-icon"

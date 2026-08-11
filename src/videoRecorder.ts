@@ -1,11 +1,19 @@
 import type { EmotionKind } from "./emotions/detectEmotion";
-import { createVideoFrameSource, paintRecordingFrame, type CaptureOverlayMode } from "./screenshot";
+import { composeAuraFrame } from "./auraCompositor";
+import type { CaptureOverlayMode } from "./screenshot";
+import { createVideoFrameSource } from "./screenshot";
+import type { SegmentationMask } from "./segmentation";
 import { getOverlayStrength } from "./overlayOpacity";
 
 export const RECORD_DURATION_MS = 30_000;
+const RECORD_FPS = 30;
 
 function pickMimeType(): string {
   const candidates = [
+    "video/mp4",
+    "video/mp4;codecs=avc1",
+    "video/mp4;codecs=h264",
+    "video/quicktime",
     "video/webm;codecs=vp9",
     "video/webm;codecs=vp8",
     "video/webm",
@@ -20,17 +28,17 @@ function pad(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-function videoFilename(mimeType: string): string {
+/** User-facing export is always `.mov` (MP4/H.264 when supported). */
+export function videoFilename(_mimeType?: string): string {
   const d = new Date();
-  const ext = mimeType.includes("mp4") ? "mp4" : "webm";
-  return `emotion-mirror-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.${ext}`;
+  return `nissa-love-you-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.mov`;
 }
 
-export function downloadVideoBlob(blob: Blob, mimeType: string): void {
+export function downloadVideoBlob(blob: Blob, _mimeType?: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = videoFilename(mimeType);
+  a.download = videoFilename();
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -41,39 +49,60 @@ export interface EmotionVideoRecorder {
   isActive(): boolean;
 }
 
+type CanvasCaptureTrack = MediaStreamTrack & { requestFrame?: () => void };
+
 export function createEmotionVideoRecorder(options: {
   video: HTMLVideoElement;
-  overlayEl: HTMLElement;
   stageEl: HTMLElement;
   getEmotion: () => EmotionKind;
   getOverlayMode: () => CaptureOverlayMode;
+  getMask: (timestampMs: number) => SegmentationMask | null;
   onProgress?: (remainingSec: number, progress: number) => void;
   onMaxDuration?: (blob: Blob) => void;
 }): EmotionVideoRecorder {
   const canvas = document.createElement("canvas");
+  canvas.setAttribute("aria-hidden", "true");
+  canvas.style.cssText =
+    "position:fixed;left:-9999px;top:0;width:1px;height:1px;pointer-events:none;opacity:0";
+  options.stageEl.appendChild(canvas);
+
   let recorder: MediaRecorder | null = null;
+  let captureTrack: CanvasCaptureTrack | null = null;
   let mimeType = "video/webm";
   let chunks: Blob[] = [];
   let rafId = 0;
   let progressTimer = 0;
   let maxDurationTimer = 0;
   let active = false;
+  let stopping = false;
   let frameCount = 0;
   let lastFrameLogAt = 0;
   let lastPaintMs = 0;
+  let startedAt = 0;
 
-  const paintFrame = (): void => {
-    if (!active) return;
+  const requestCaptureFrame = (): void => {
+    captureTrack?.requestFrame?.();
+  };
+
+  const paintFrame = (timestampMs: number): void => {
+    if (!active && !stopping) return;
     const t0 = performance.now();
+    const cw = options.stageEl.clientWidth;
+    const ch = options.stageEl.clientHeight;
     const source = createVideoFrameSource(options.video);
-    paintRecordingFrame(
-      canvas,
+
+    composeAuraFrame(canvas, {
       source,
-      options.overlayEl,
-      options.getEmotion(),
-      options.getOverlayMode(),
-      options.stageEl
-    );
+      overlayMode: options.getOverlayMode(),
+      emotion: options.getEmotion(),
+      cw,
+      ch,
+      mask: options.getMask(timestampMs),
+      recording: true,
+      timeMs: timestampMs,
+    });
+
+    requestCaptureFrame();
     lastPaintMs = performance.now() - t0;
     frameCount += 1;
 
@@ -81,11 +110,13 @@ export function createEmotionVideoRecorder(options: {
     if (now - lastFrameLogAt >= 1000) {
       lastFrameLogAt = now;
       // #region agent log
-      fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'videoRecorder.ts:paintFrame',message:'recording frame stats',data:{frameCount,paintMs:lastPaintMs,sliderPercent:getOverlayStrength(),emotion:options.getEmotion(),overlayMode:options.getOverlayMode()},timestamp:Date.now(),hypothesisId:'H-record-perf',runId:'record-smooth-v1'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'videoRecorder.ts:paintFrame',message:'recording frame stats',data:{frameCount,paintMs:lastPaintMs,sliderPercent:getOverlayStrength(),emotion:options.getEmotion(),overlayMode:options.getOverlayMode(),hasRequestFrame:typeof captureTrack?.requestFrame==='function'},timestamp:Date.now(),hypothesisId:'H-record-edge',runId:'video-remake-v1'})}).catch(()=>{});
       // #endregion
     }
 
-    rafId = requestAnimationFrame(paintFrame);
+    if (active) {
+      rafId = requestAnimationFrame(() => paintFrame(performance.now()));
+    }
   };
 
   const clearTimers = (): void => {
@@ -97,15 +128,28 @@ export function createEmotionVideoRecorder(options: {
     maxDurationTimer = 0;
   };
 
+  const teardownCanvas = (): void => {
+    canvas.remove();
+  };
+
   const finish = (): Promise<Blob | null> => {
-    if (!active && !recorder) return Promise.resolve(null);
+    if (!active && !recorder && !stopping) return Promise.resolve(null);
+
+    stopping = true;
     active = false;
     clearTimers();
 
     return new Promise((resolve) => {
       if (!recorder || recorder.state === "inactive") {
         recorder = null;
-        resolve(chunks.length ? new Blob(chunks, { type: mimeType }) : null);
+        captureTrack = null;
+        stopping = false;
+        teardownCanvas();
+        const blob = chunks.length ? new Blob(chunks, { type: mimeType }) : null;
+        // #region agent log
+        fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'videoRecorder.ts:finish',message:'recorder inactive finish',data:{chunkCount:chunks.length,blobSize:blob?.size??0,mimeType,frameCount,durationMs:startedAt?Math.round(performance.now()-startedAt):0},timestamp:Date.now(),hypothesisId:'H-record-blob',runId:'video-remake-v1'})}).catch(()=>{});
+        // #endregion
+        resolve(blob);
         return;
       }
 
@@ -114,10 +158,26 @@ export function createEmotionVideoRecorder(options: {
         () => {
           const blob = chunks.length ? new Blob(chunks, { type: mimeType }) : null;
           recorder = null;
+          captureTrack = null;
+          stopping = false;
+          teardownCanvas();
+          // #region agent log
+          fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'videoRecorder.ts:finish',message:'recorder stopped',data:{chunkCount:chunks.length,blobSize:blob?.size??0,mimeType,frameCount,durationMs:startedAt?Math.round(performance.now()-startedAt):0},timestamp:Date.now(),hypothesisId:'H-record-blob',runId:'video-remake-v1'})}).catch(()=>{});
+          // #endregion
           resolve(blob);
         },
         { once: true }
       );
+
+      try {
+        if (recorder.state === "recording") {
+          recorder.requestData();
+        }
+      } catch {
+        /* ignore */
+      }
+      paintFrame(performance.now());
+      requestCaptureFrame();
       recorder.stop();
     });
   };
@@ -133,14 +193,19 @@ export function createEmotionVideoRecorder(options: {
         throw new Error("Camera is not ready / 鏡頭尚未就緒");
       }
 
-      paintRecordingFrame(
-        canvas,
+      const cw = options.stageEl.clientWidth;
+      const ch = options.stageEl.clientHeight;
+      composeAuraFrame(canvas, {
         source,
-        options.overlayEl,
-        options.getEmotion(),
-        options.getOverlayMode(),
-        options.stageEl
-      );
+        overlayMode: options.getOverlayMode(),
+        emotion: options.getEmotion(),
+        cw,
+        ch,
+        mask: options.getMask(performance.now()),
+        recording: true,
+        timeMs: performance.now(),
+      });
+
       if (canvas.width <= 0 || canvas.height <= 0) {
         throw new Error("Could not prepare recorder / 無法開始錄影");
       }
@@ -152,18 +217,23 @@ export function createEmotionVideoRecorder(options: {
       mimeType = pickMimeType();
       chunks = [];
       active = true;
+      stopping = false;
+      frameCount = 0;
+      startedAt = performance.now();
 
-      const stream = canvas.captureStream(0);
+      const stream = canvas.captureStream(RECORD_FPS);
+      captureTrack = stream.getVideoTracks()[0] ?? null;
+      requestCaptureFrame();
+
       recorder = new MediaRecorder(stream, {
         mimeType,
-        videoBitsPerSecond: 2_500_000,
+        videoBitsPerSecond: 4_000_000,
       });
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) chunks.push(event.data);
       };
-      recorder.start(250);
+      recorder.start(500);
 
-      const startedAt = performance.now();
       const tickProgress = (): void => {
         if (!active) return;
         const elapsed = performance.now() - startedAt;
@@ -175,29 +245,17 @@ export function createEmotionVideoRecorder(options: {
       };
       tickProgress();
 
-      paintFrame();
-
-      // #region agent log
-      fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'videoRecorder.ts:start',message:'recording started',data:{mimeType,canvasW:canvas.width,canvasH:canvas.height,durationMs:RECORD_DURATION_MS},timestamp:Date.now(),hypothesisId:'H-record',runId:'post-fix'})}).catch(()=>{});
-      // #endregion
+      paintFrame(performance.now());
 
       maxDurationTimer = window.setTimeout(() => {
         void finish().then((blob) => {
-          // #region agent log
-          fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'videoRecorder.ts:finish',message:'recording max duration reached',data:{blobSize:blob?.size??0,mimeType},timestamp:Date.now(),hypothesisId:'H-record',runId:'post-fix'})}).catch(()=>{});
-          // #endregion
           if (blob && blob.size > 0) options.onMaxDuration?.(blob);
         });
       }, RECORD_DURATION_MS);
     },
 
     stop(): Promise<Blob | null> {
-      return finish().then((blob) => {
-        // #region agent log
-        fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'videoRecorder.ts:stop',message:'recording stopped manually',data:{blobSize:blob?.size??0,mimeType},timestamp:Date.now(),hypothesisId:'H-record',runId:'post-fix'})}).catch(()=>{});
-        // #endregion
-        return blob;
-      });
+      return finish();
     },
   };
 }

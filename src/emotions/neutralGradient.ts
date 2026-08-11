@@ -1,3 +1,4 @@
+import { CLASSIC_AURA_COLORS } from "../edgeAura";
 import { AURA_PRESETS, type AuraBlobConfig } from "./auraOverlay";
 
 function randomHue(): number {
@@ -12,17 +13,17 @@ function pickNeutralColors(): string[] {
   const base = randomHue();
   return [
     hsla(base, 88, 55, 0.78),
-    hsla((base + 75 + Math.floor(Math.random() * 30)) % 360, 85, 52, 0.75),
-    hsla((base + 140 + Math.floor(Math.random() * 40)) % 360, 86, 50, 0.72),
-    hsla((base + 200 + Math.floor(Math.random() * 35)) % 360, 82, 54, 0.7),
-    hsla((base + 280 + Math.floor(Math.random() * 45)) % 360, 90, 58, 0.8),
-    hsla((base + 320 + Math.floor(Math.random() * 25)) % 360, 78, 50, 0.68),
+    hsla((base + 75 + Math.floor(Math.random() * 30)) % 360, 85, 52, 0.74),
+    hsla((base + 140 + Math.floor(Math.random() * 40)) % 360, 86, 50, 0.70),
+    hsla((base + 200 + Math.floor(Math.random() * 35)) % 360, 82, 54, 0.76),
+    hsla((base + 280 + Math.floor(Math.random() * 45)) % 360, 90, 58, 0.88),
   ];
 }
 
 export interface NeutralGradientController {
   start(layer: HTMLElement): void;
   stop(): void;
+  getColors(): string[];
 }
 
 export function createNeutralGradientController(
@@ -31,7 +32,7 @@ export function createNeutralGradientController(
   let rafId = 0;
   let lastSwitch = 0;
   let targetLayer: HTMLElement | null = null;
-  let colors = pickNeutralColors();
+  let colors = CLASSIC_AURA_COLORS.neutral.slice();
 
   const apply = (): void => {
     if (!targetLayer) return;
@@ -63,7 +64,7 @@ export function createNeutralGradientController(
     start(layer: HTMLElement) {
       targetLayer = layer;
       lastSwitch = performance.now();
-      colors = pickNeutralColors();
+      colors = CLASSIC_AURA_COLORS.neutral.slice();
       apply();
       cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(tick);
@@ -71,6 +72,9 @@ export function createNeutralGradientController(
     stop() {
       cancelAnimationFrame(rafId);
       targetLayer = null;
+    },
+    getColors() {
+      return colors.slice();
     },
   };
 }

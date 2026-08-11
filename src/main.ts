@@ -8,6 +8,13 @@ import {
   switchCamera,
 } from "./camera";
 import { createFaceDetector } from "./detectors";
+import { composeAuraFrame, paintAuraOverlayOnly } from "./auraCompositor";
+import {
+  buildCenterSubjectMask,
+  createSubjectSegmenter,
+  type SegmentationMask,
+  type SubjectSegmenter,
+} from "./segmentation";
 import {
   applyAuraPreset,
   ensureAuraLayer,
@@ -37,16 +44,12 @@ import {
   type FrameSource,
 } from "./screenshot";
 import {
-  blitCanvas,
-  captureLiveStage,
-  captureLiveStageBlob,
-} from "./stageCapture";
-import {
   applyWatermarkToBlob,
   blobFromReviewCanvas,
   downloadPhotoBlob,
   SHARE_PLATFORMS,
   shareReviewPhoto,
+  shareReviewVideo,
 } from "./sharePhoto";
 import { playShutterSound } from "./shutterSound";
 import {
@@ -65,7 +68,7 @@ type ReviewButtonMode = ReviewKind | "upload";
 const LONG_PRESS_MS = 500;
 
 const AUTO_GRADIENT_PREVIEW =
-  "linear-gradient(135deg, #6366f1 0%, #ec4899 100%)";
+  "radial-gradient(circle at 50% 8%, #1c5fff 0%, transparent 55%), radial-gradient(circle at 15% 20%, #d22dc3 0%, transparent 50%), radial-gradient(circle at 85% 18%, #00cdff 0%, transparent 45%), radial-gradient(circle at 50% 45%, #ff5c20 0%, transparent 65%), radial-gradient(circle at 50% 62%, #cdff37 0%, transparent 40%)";
 
 function applyOverlay(
   overlay: HTMLElement,
@@ -82,14 +85,14 @@ function applyOverlay(
 
   if (overlayMode !== "auto") {
     neutralGradient.stop();
-    const g = getUiGradient(overlayMode);
-    applyUiGradientLayer(uiGradientLayer, g ?? null);
+    applyUiGradientLayer(uiGradientLayer, null);
     setAuraLayerVisible(auraLayer, false);
+    overlay.classList.add(`is-${emotion}`);
     return;
   }
 
   applyUiGradientLayer(uiGradientLayer, null);
-  setAuraLayerVisible(auraLayer, true);
+  setAuraLayerVisible(auraLayer, false);
 
   if (emotion === "neutral") {
     if (animateNeutral) {
@@ -162,13 +165,13 @@ function buildGradientDropdown(
     menu.appendChild(li);
   };
 
-  addItem("auto", AUTO_GRADIENT_PREVIEW, "Auto / 自動");
+  addItem("auto", AUTO_GRADIENT_PREVIEW, "Auto Aura / 自動光暈");
   for (const g of UI_GRADIENTS) {
     addItem(g.id, uiGradientCss(g), g.name);
   }
 
   triggerSwatch.style.background = AUTO_GRADIENT_PREVIEW;
-  triggerName.textContent = "Auto / 自動";
+  triggerName.textContent = "Auto Aura / 自動光暈";
 }
 
 function flashCapture(flashEl: HTMLElement): void {
@@ -204,6 +207,7 @@ async function bootstrap(): Promise<void> {
   const reviewIconDelete = document.querySelector(".review-icon-delete");
   const captureFlash = document.getElementById("capture-flash");
   const captureFreeze = document.getElementById("capture-freeze");
+  const auraCanvas = document.getElementById("aura-canvas");
   const recordedPlayback = document.getElementById("recorded-playback");
   const uploadedPhoto = document.getElementById("uploaded-photo");
   const photoUploadInput = document.getElementById("photo-upload-input");
@@ -244,6 +248,7 @@ async function bootstrap(): Promise<void> {
     !(reviewIconDelete instanceof SVGElement) ||
     !(captureFlash instanceof HTMLElement) ||
     !(captureFreeze instanceof HTMLCanvasElement) ||
+    !(auraCanvas instanceof HTMLCanvasElement) ||
     !(recordedPlayback instanceof HTMLVideoElement) ||
     !(uploadedPhoto instanceof HTMLImageElement) ||
     !(photoUploadInput instanceof HTMLInputElement) ||
@@ -289,6 +294,7 @@ async function bootstrap(): Promise<void> {
   const reviewIconDeleteEl = reviewIconDelete;
   const captureFlashEl = captureFlash;
   const captureFreezeEl = captureFreeze;
+  const auraCanvasEl = auraCanvas;
   const recordedPlaybackEl = recordedPlayback;
   const uploadedPhotoEl = uploadedPhoto;
   const photoUploadInputEl = photoUploadInput;
@@ -310,6 +316,52 @@ async function bootstrap(): Promise<void> {
     opacitySliderWidgetEl.style.setProperty("--opacity-pct", String(rounded));
     setOverlayStrength(rounded);
     syncOverlayOpacity();
+    paintLiveAura();
+  };
+
+  const getActiveMask = (): SegmentationMask | null => {
+    if (sourceMode === "upload") return uploadMask;
+    return liveMask;
+  };
+
+  const paintLiveAura = (timeMs = performance.now()): void => {
+    if (
+      frameFrozen ||
+      reviewKind === "video" ||
+      videoStageEl.classList.contains("is-playback-mode")
+    ) {
+      return;
+    }
+
+    const cw = videoStageEl.clientWidth;
+    const ch = videoStageEl.clientHeight;
+    if (cw <= 0 || ch <= 0) return;
+
+    paintAuraOverlayOnly(
+      auraCanvasEl,
+      cw,
+      ch,
+      getActiveMask(),
+      currentEmotion,
+      overlayMode,
+      timeMs
+    );
+  };
+
+  const exportProductBlob = async (): Promise<Blob> => {
+    const canvas = document.createElement("canvas");
+    const cw = videoStageEl.clientWidth;
+    const ch = videoStageEl.clientHeight;
+    composeAuraFrame(canvas, {
+      source: getFrameSource(),
+      overlayMode,
+      emotion: currentEmotion,
+      cw,
+      ch,
+      mask: getActiveMask(),
+      timeMs: performance.now(),
+    });
+    return blobFromReviewCanvas(canvas);
   };
 
   const applyCameraMirror = (): void => {
@@ -339,6 +391,9 @@ async function bootstrap(): Promise<void> {
   let longPressTriggered = false;
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
   let videoRecorder: EmotionVideoRecorder | null = null;
+  let segmenter: SubjectSegmenter | null = null;
+  let liveMask: SegmentationMask | null = null;
+  let uploadMask: SegmentationMask | null = null;
   let recordedPlaybackUrl: string | null = null;
   let activePointerId: number | null = null;
   let finishingRecording = false;
@@ -368,11 +423,12 @@ async function bootstrap(): Promise<void> {
     recordedPlaybackEl.hidden = true;
     videoStageEl.classList.remove("is-playback-mode");
     overlayEl.style.visibility = "";
+    auraCanvasEl.style.visibility = "";
   };
 
   const setReviewButtons = (mode: ReviewButtonMode | null): void => {
     const isVideo = mode === "video";
-    const canShare = mode === "photo" || mode === "upload";
+    const canShare = mode === "photo" || mode === "upload" || mode === "video";
     btnReviewShareEl.hidden = !canShare;
     shareSheetEl.hidden = true;
     btnReviewShareEl.setAttribute("aria-expanded", "false");
@@ -409,22 +465,55 @@ async function bootstrap(): Promise<void> {
     recordedVideoMime = mimeType;
     reviewKind = "video";
 
+    captureFreezeEl.classList.remove("is-visible");
+    frameFrozen = false;
+    videoStageEl.classList.remove("is-frozen");
+
     if (recordedPlaybackUrl) URL.revokeObjectURL(recordedPlaybackUrl);
     recordedPlaybackUrl = URL.createObjectURL(blob);
-    recordedPlaybackEl.src = recordedPlaybackUrl;
+
+    recordedPlaybackEl.pause();
     recordedPlaybackEl.hidden = false;
     recordedPlaybackEl.loop = true;
-    void recordedPlaybackEl.play();
+    recordedPlaybackEl.muted = true;
+    recordedPlaybackEl.playsInline = true;
+    recordedPlaybackEl.src = recordedPlaybackUrl;
+    recordedPlaybackEl.load();
+
+    const startPlayback = (): void => {
+      recordedPlaybackEl.currentTime = 0;
+      void recordedPlaybackEl.play().then(() => {
+        // #region agent log
+        fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:playback',message:'video playback playing',data:{blobSize:blob.size,mime:mimeType,duration:recordedPlaybackEl.duration,videoWidth:recordedPlaybackEl.videoWidth,videoHeight:recordedPlaybackEl.videoHeight,paused:recordedPlaybackEl.paused},timestamp:Date.now(),hypothesisId:'H-playback',runId:'video-remake-v1'})}).catch(()=>{});
+        // #endregion
+      }).catch((err: unknown) => {
+        // #region agent log
+        fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:playback',message:'video playback play failed',data:{error:err instanceof Error?err.message:String(err),blobSize:blob.size,mime:mimeType},timestamp:Date.now(),hypothesisId:'H-playback',runId:'video-remake-v1'})}).catch(()=>{});
+        // #endregion
+      });
+    };
+
+    recordedPlaybackEl.addEventListener("loadeddata", startPlayback, { once: true });
+    recordedPlaybackEl.addEventListener(
+      "error",
+      () => {
+        // #region agent log
+        fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:playback',message:'video playback load error',data:{blobSize:blob.size,mime:mimeType,mediaError:recordedPlaybackEl.error?.code},timestamp:Date.now(),hypothesisId:'H-playback',runId:'video-remake-v1'})}).catch(()=>{});
+        // #endregion
+      },
+      { once: true }
+    );
 
     videoEl.pause();
     overlayEl.style.visibility = "hidden";
+    auraCanvasEl.style.visibility = "hidden";
     videoStageEl.classList.add("is-playback-mode");
     setReviewButtons("video");
     setShutterDock("review");
     btnShutterEl.disabled = true;
-    msgEl.textContent = "Preview / 預覽錄影";
+    msgEl.textContent = "Preview / 預覽錄影（循環播放）";
     // #region agent log
-    fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:playback',message:'video playback started',data:{blobSize:blob.size,mime:mimeType},timestamp:Date.now(),hypothesisId:'H-playback',runId:'post-fix'})}).catch(()=>{});
+    fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:playback',message:'video playback started',data:{blobSize:blob.size,mime:mimeType},timestamp:Date.now(),hypothesisId:'H-playback',runId:'video-remake-v1'})}).catch(()=>{});
     // #endregion
   };
 
@@ -540,13 +629,9 @@ async function bootstrap(): Promise<void> {
 
   function syncOverlayOpacity(): void {
     overlayEl.style.mixBlendMode = overlayBlendMode();
-    if (overlayMode !== "auto") {
-      const g = getUiGradient(overlayMode);
-      applyUiGradientLayer(uiGradientLayer, g ?? null);
-      setAuraLayerVisible(auraLayer, false);
-    } else {
-      setAuraLayerVisible(auraLayer, true);
-    }
+    applyUiGradientLayer(uiGradientLayer, null);
+    setAuraLayerVisible(auraLayer, false);
+    auraCanvasEl.style.mixBlendMode = overlayBlendMode();
     // #region agent log
     fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:opacity',message:'overlay opacity synced',data:{percent:Number(overlayOpacityEl.value),fullCover:isOverlayFullCover(),blendMode:overlayBlendMode(),mappedUiAlpha:scaledUiGradientOpacity(),mappedAuraAlpha:scaledAuraOpacity(),overlayMode,auraOpacity:auraLayer.style.opacity,uiOpacity:uiGradientLayer.style.opacity},timestamp:Date.now(),hypothesisId:'H-opacity-full',runId:'vertical-slider-fullcover'})}).catch(()=>{});
     // #endregion
@@ -555,6 +640,7 @@ async function bootstrap(): Promise<void> {
   function refreshOverlay(): void {
     lastOverlayKey = "";
     syncOverlay(currentEmotion);
+    paintLiveAura();
   }
 
   function syncOverlay(emotion: EmotionKind): void {
@@ -684,8 +770,17 @@ async function bootstrap(): Promise<void> {
     await playShutterSound();
     flashCapture(captureFlashEl);
     try {
-      const stageCanvas = await captureLiveStage(videoStageEl);
-      const painted = blitCanvas(captureFreezeEl, stageCanvas);
+      const cw = videoStageEl.clientWidth;
+      const ch = videoStageEl.clientHeight;
+      const painted = composeAuraFrame(captureFreezeEl, {
+        source: getFrameSource(),
+        overlayMode,
+        emotion: currentEmotion,
+        cw,
+        ch,
+        mask: liveMask,
+        timeMs: performance.now(),
+      });
       if (!painted) {
         msgEl.textContent = "Capture failed / 拍照失敗，請再試一次";
         return;
@@ -721,10 +816,11 @@ async function bootstrap(): Promise<void> {
 
     videoRecorder = createEmotionVideoRecorder({
       video: videoEl,
-      overlayEl,
       stageEl: videoStageEl,
       getEmotion: () => currentEmotion,
       getOverlayMode: () => overlayMode,
+      getMask: (timestampMs) =>
+        segmenter?.segmentVideo(videoEl, timestampMs) ?? liveMask,
       onProgress: (remainingSec, progress) => {
         setRecordingUi(true, progress);
         msgEl.textContent = `Recording ${remainingSec}s / 錄影中 ${remainingSec} 秒`;
@@ -860,7 +956,8 @@ async function bootstrap(): Promise<void> {
     photoUploadInputEl.click();
   });
 
-  const canSharePhoto = (): boolean => {
+  const canShareProduct = (): boolean => {
+    if (reviewKind === "video" && recordedVideoBlob) return true;
     if (sourceMode === "upload" && uploadActive) return true;
     return (
       reviewKind === "photo" &&
@@ -871,7 +968,7 @@ async function bootstrap(): Promise<void> {
   const getShareablePhotoBlob = async (): Promise<Blob> => {
     let base: Blob;
     if (sourceMode === "upload" && uploadActive) {
-      base = await captureLiveStageBlob(videoStageEl);
+      base = await exportProductBlob();
     } else if (
       reviewKind === "photo" &&
       captureFreezeEl.classList.contains("is-visible")
@@ -900,9 +997,21 @@ async function bootstrap(): Promise<void> {
     btn.dataset.platform = platform.id;
     btn.innerHTML = `<span class="share-platform-mark" style="background:${platform.accent}">${platform.shortLabel}</span><span class="share-platform-label">${platform.label}</span>`;
     btn.addEventListener("click", async () => {
-      if (!canSharePhoto()) return;
+      if (!canShareProduct()) return;
       msgEl.textContent = "Preparing share… / 準備分享中…";
       try {
+        if (reviewKind === "video" && recordedVideoBlob) {
+          const result = await shareReviewVideo(
+            recordedVideoBlob,
+            recordedVideoMime
+          );
+          msgEl.textContent =
+            result === "shared"
+              ? "Shared! / 已分享"
+              : "Video saved — share from gallery / 影片已儲存，請從相簿分享";
+          closeShareSheet();
+          return;
+        }
         const blob = await getShareablePhotoBlob();
         const result = await shareReviewPhoto(blob, platform.id);
         if (result === "shared") {
@@ -925,7 +1034,7 @@ async function bootstrap(): Promise<void> {
   }
 
   btnReviewShareEl.addEventListener("click", () => {
-    if (!canSharePhoto()) return;
+    if (!canShareProduct()) return;
     if (shareSheetEl.hidden) {
       openShareSheet();
     } else {
@@ -939,11 +1048,10 @@ async function bootstrap(): Promise<void> {
       msgEl.textContent = "Saving video… / 儲存影片中…";
       try {
         downloadVideoBlob(recordedVideoBlob, recordedVideoMime);
-        msgEl.textContent = "Video saved! / 影片已下載";
+        msgEl.textContent = "Video saved (.mov) / 影片已下載，可繼續預覽";
         // #region agent log
-        fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:review',message:'video saved',data:{blobSize:recordedVideoBlob.size,mime:recordedVideoMime},timestamp:Date.now(),hypothesisId:'H-record',runId:'post-fix'})}).catch(()=>{});
+        fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:review',message:'video saved',data:{blobSize:recordedVideoBlob.size,mime:recordedVideoMime},timestamp:Date.now(),hypothesisId:'H-record',runId:'video-remake-v1'})}).catch(()=>{});
         // #endregion
-        await exitVideoReview();
       } catch (e) {
         msgEl.textContent =
           e instanceof Error ? e.message : "Save failed / 儲存失敗";
@@ -961,7 +1069,7 @@ async function bootstrap(): Promise<void> {
         const blob = await blobFromReviewCanvas(captureFreezeEl);
         downloadPhotoBlob(blob);
       } else if (sourceMode === "upload" && uploadActive) {
-        const blob = await captureLiveStageBlob(videoStageEl);
+        const blob = await exportProductBlob();
         downloadPhotoBlob(blob);
       } else {
         const blob = await exportEmotionJpegBlob(
@@ -1053,6 +1161,15 @@ async function bootstrap(): Promise<void> {
     uploadedPhotoEl.onload = () => {
       URL.revokeObjectURL(url);
       showUploadMode();
+      const nw = uploadedPhotoEl.naturalWidth;
+      const nh = uploadedPhotoEl.naturalHeight;
+      uploadMask =
+        segmenter?.segmentImage(uploadedPhotoEl, nw, nh) ??
+        buildCenterSubjectMask(
+          Math.max(32, Math.round(nw * 0.25)),
+          Math.max(32, Math.round(nh * 0.25))
+        );
+      paintLiveAura();
       // #region agent log
       fetch('http://127.0.0.1:7381/ingest/21087eab-2b32-46f5-a111-0c3fa4b16ead',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'477950'},body:JSON.stringify({sessionId:'477950',location:'main.ts:upload',message:'photo loaded',data:{width:uploadedPhotoEl.naturalWidth,height:uploadedPhotoEl.naturalHeight,overlayMode},timestamp:Date.now(),hypothesisId:'H-upload',runId:'post-fix'})}).catch(()=>{});
       // #endregion
@@ -1079,6 +1196,11 @@ async function bootstrap(): Promise<void> {
       // #endregion
 
       detector = await createFaceDetector();
+      try {
+        segmenter = await createSubjectSegmenter();
+      } catch (e) {
+        console.warn("[AuraCamera] Segmentation unavailable.", e);
+      }
       msgEl.textContent = "Camera active / 鏡頭已開啟";
 
       const loop = (): void => {
@@ -1093,6 +1215,10 @@ async function bootstrap(): Promise<void> {
         }
 
         const nowMs = performance.now();
+        if (segmenter && !isRecording) {
+          liveMask = segmenter.segmentVideo(videoEl, nowMs);
+        }
+
         const faceRes = detector.face.detectForVideo(videoEl, nowMs);
         const blend = faceRes.faceBlendshapes[0];
 
@@ -1122,6 +1248,19 @@ async function bootstrap(): Promise<void> {
       };
 
       requestAnimationFrame(loop);
+
+      const auraAnimLoop = (): void => {
+        if (
+          !frameFrozen &&
+          reviewKind !== "video" &&
+          !videoStageEl.classList.contains("is-playback-mode") &&
+          (cameraActive || uploadActive)
+        ) {
+          paintLiveAura();
+        }
+        requestAnimationFrame(auraAnimLoop);
+      };
+      requestAnimationFrame(auraAnimLoop);
     } catch (e) {
       console.error(e);
       videoStageEl.classList.remove("is-active");
@@ -1136,6 +1275,7 @@ async function bootstrap(): Promise<void> {
       // #endregion
       disposeCamera(videoEl);
       detector?.close();
+      segmenter?.close();
       smoother.reset();
       mouthTracker.reset();
       browTracker.reset();

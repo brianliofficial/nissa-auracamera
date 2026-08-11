@@ -110,6 +110,24 @@ function downloadBlob(blob: Blob, filename: string): void {
   downloadPhotoBlob(blob, filename);
 }
 
+export function reviewVideoFilename(_mimeType?: string): string {
+  const d = new Date();
+  return `nissa-love-you-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.mov`;
+}
+
+export async function shareReviewVideo(
+  blob: Blob,
+  mimeType: string
+): Promise<"shared" | "downloaded"> {
+  const filename = reviewVideoFilename(mimeType);
+  const file = new File([blob], filename, { type: mimeType });
+  if (await shareFileNative(file, SHARE_TEXT)) {
+    return "shared";
+  }
+  downloadBlob(blob, filename);
+  return "downloaded";
+}
+
 export async function shareReviewPhoto(
   blob: Blob,
   platform: SharePlatform
